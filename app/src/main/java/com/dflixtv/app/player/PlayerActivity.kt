@@ -108,6 +108,23 @@ class PlayerActivity : ComponentActivity() {
         load(fileId, resume = true)
     }
 
+    /**
+     * Picks the best audio track: the preferred (or original) language first; within it ExoPlayer's
+     * selector already favours the most channels and highest bitrate the device can play.
+     * Commentary and descriptive-audio tracks are avoided by preferring main-role tracks.
+     */
+    private fun applyAudioPreference() {
+        val preferred = store.audioLanguage
+        val languages = buildList {
+            if (preferred == "original") details?.originalLanguage?.let(::add) else add(preferred)
+            add("en")
+        }.distinct()
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setPreferredAudioLanguages(*languages.toTypedArray())
+            .setPreferredAudioRoleFlags(C.ROLE_FLAG_MAIN)
+            .build()
+    }
+
     private fun buildPlayer(): ExoPlayer {
         val renderers = DefaultRenderersFactory(this)
             // Prefer hardware/passthrough audio, fall back to FFmpeg for AC3/E-AC3/DTS/TrueHD.
@@ -173,6 +190,7 @@ class PlayerActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             if (details == null) details = runCatching { DflixApi.titlePage(titleId).first }.getOrNull()
+            applyAudioPreference()
             watchInfo = runCatching { DflixApi.watchInfo(titleId, fileId) }.getOrNull()
             updateHeader()
             if (watchInfo?.subtitles?.isNotEmpty() == true) reloadKeepingPosition()

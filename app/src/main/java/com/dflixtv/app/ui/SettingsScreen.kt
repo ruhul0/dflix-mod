@@ -39,6 +39,7 @@ fun SettingsScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var language by remember { mutableStateOf(store.subtitleLanguage) }
+    var audioLanguage by remember { mutableStateOf(store.audioLanguage) }
     var osKey by remember { mutableStateOf(store.openSubtitlesApiKey) }
     var subdlKey by remember { mutableStateOf(store.subdlApiKey) }
     var autoplay by remember { mutableStateOf(store.autoPlayNext) }
@@ -46,6 +47,17 @@ fun SettingsScreen() {
     var updateStatus by remember { mutableStateOf<String?>(null) }
 
     LazyColumn(contentPadding = PaddingValues(horizontal = gutter(), vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        item {
+            Header("Audio language", "The player picks the best-quality track in this language. Original uses the title's own language.")
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 6.dp)) {
+                item {
+                    Pill("Original", selected = audioLanguage == "original", onClick = { audioLanguage = "original"; store.audioLanguage = "original" })
+                }
+                items(Language.ALL.filterNot { '-' in it.code2 }) { lang ->
+                    Pill(lang.name, selected = audioLanguage == lang.code2, onClick = { audioLanguage = lang.code2; store.audioLanguage = lang.code2 })
+                }
+            }
+        }
         item {
             Header("Subtitle language", "Used when searching subtitles online.")
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 6.dp)) {
