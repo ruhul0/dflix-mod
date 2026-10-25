@@ -25,7 +25,8 @@ class SubtitleRepository(private val context: Context, private val store: Store)
         }.awaitAll()
         SearchOutcome(
             results = outcomes.flatMap { it.second.getOrDefault(emptyList()) }
-                .sortedWith(compareByDescending<SubtitleResult> { it.hashMatch }.thenByDescending { it.downloads }),
+                .filter { SubtitleRanking.fitsDuration(it, query) }
+                .sortedByDescending { SubtitleRanking.score(it, query) },
             errors = outcomes.mapNotNull { (p, r) -> r.exceptionOrNull()?.let { "${p.name}: ${it.message}" } },
         )
     }

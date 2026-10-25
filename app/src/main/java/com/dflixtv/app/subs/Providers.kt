@@ -84,6 +84,14 @@ class OpenSubtitlesOrg : SubtitleProvider {
         if (format !in SubtitleFormats.SUPPORTED) return null
         val link = item.str("SubDownloadLink") ?: return null
         if (query.isEpisode && !query.matchesTitle(item.str("MovieName"))) return null
+        // Hash links are user-submitted and sometimes point at other films; trust only matching IDs.
+        val wantedImdb = query.imdbId?.removePrefix("tt")?.toLongOrNull()
+        val itemImdb = (item.str("SeriesIMDBParent")?.takeIf { query.isEpisode } ?: item.str("IDMovieImdb"))?.toLongOrNull()
+        if (wantedImdb != null && itemImdb != null && wantedImdb != itemImdb) return null
+        if (query.isEpisode &&
+            (item.str("SeriesSeason")?.toIntOrNull()?.let { it != query.season } == true ||
+                item.str("SeriesEpisode")?.toIntOrNull()?.let { it != query.episode } == true)
+        ) return null
         return SubtitleResult(
             provider = name,
             fileName = item.str("SubFileName") ?: "subtitle.$format",
@@ -94,6 +102,7 @@ class OpenSubtitlesOrg : SubtitleProvider {
             format = format,
             downloadRef = link,
             encodingHint = item.str("SubEncoding"),
+            lastCueMs = item.str("SubLastTS")?.let(::parseTimestamp),
         )
     }
 
@@ -215,6 +224,13 @@ class SubDl(private val store: Store) : SubtitleProvider {
             ?: entries.firstOrNull()
             ?: throw IOException("No subtitle file in archive")
     }
+}
+
+/** "02:09:41" -> milliseconds */
+private fun parseTimestamp(text: String): Long? {
+    val parts = text.split(':').mapNotNull { it.toLongOrNull() }
+    if (parts.size != 3) return null
+    return ((parts[0] * 60 + parts[1]) * 60 + parts[2]) * 1000
 }
 
 private fun JsonArray?.orEmpty(): List<JsonElement> = this ?: emptyList()

@@ -15,6 +15,8 @@ data class SubtitleQuery(
     val fileName: String?,
     val fileSize: Long?,
     val streamUrl: String,
+    /** Video length if the player knows it, used to reject subtitles for another cut or film. */
+    val durationMs: Long? = null,
 ) {
     val isEpisode: Boolean get() = season != null && episode != null
 }
@@ -30,6 +32,8 @@ data class SubtitleResult(
     /** Provider-specific data needed to download the file. */
     val downloadRef: String,
     val encodingHint: String? = null,
+    /** Time of the last cue, when the provider reports it. */
+    val lastCueMs: Long? = null,
 ) {
     val displayName: String
         get() = buildString {
@@ -44,6 +48,30 @@ data class SubtitleResult(
             if (downloads > 0) "$downloads downloads" else null,
             if (hearingImpaired) "HI" else null,
         ).joinToString(" · ")
+}
+
+/** Scores how well a subtitle fits the video; higher is better. */
+object SubtitleRanking {
+    private val TOKEN = Regex("[a-z0-9]+")
+    private val NOISE = setOf("the", "a", "of", "and", "srt", "eng", "english", "en", "hi", "sdh", "mkv", "mp4", "x264", "x265", "h264", "h265")
+
+    private fun tokens(text: String) = TOKEN.findAll(text.lowercase()).map { it.value }.filter { it !in NOISE && it.length > 1 }.toSet()
+
+    /** False when the subtitle's length can't belong to this video (partial file, other cut, other film). */
+    fun fitsDuration(result: SubtitleResult, query: SubtitleQuery): Boolean {
+        val video = query.durationMs ?: return true
+        val last = result.lastCueMs ?: return true
+        return last in (video * 6 / 10)..(video + 120_000)
+    }
+
+    fun score(result: SubtitleResult, query: SubtitleQuery): Int {
+        val fileTokens = query.fileName?.let(::tokens).orEmpty() - tokens(query.title)
+        val overlap = (tokens(result.fileName) intersect fileTokens).size
+        return overlap * 10 +
+            (if (result.hashMatch) 25 else 0) +
+            (if (result.hearingImpaired) -5 else 0) +
+            kotlin.math.log10(result.downloads.coerceAtLeast(1).toDouble()).toInt()
+    }
 }
 
 interface SubtitleProvider {

@@ -310,6 +310,7 @@ class PlayerActivity : ComponentActivity() {
             language = language,
             fileName = file?.fileName,
             fileSize = file?.size,
+            durationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0 },
             streamUrl = DflixApi.streamUrl(fileId),
         )
     }
@@ -357,9 +358,8 @@ class PlayerActivity : ComponentActivity() {
 
         val query = subtitleQuery(language)
         val results = runCatching { subtitles.search(query).results }.getOrNull().orEmpty()
-        val best = results.firstOrNull { it.hashMatch }
-            ?: results.filter { !it.hearingImpaired }.maxByOrNull { it.downloads }
-            ?: results.maxByOrNull { it.downloads }
+        // Results arrive ranked by fit (matching IDs, length, release name, hash, popularity).
+        val best = results.firstOrNull()
         if (best == null || forFileId != fileId) return
         val saved = runCatching { subtitles.download(best, query, forFileId) }.getOrNull() ?: return
         if (forFileId != fileId) return
