@@ -26,6 +26,11 @@ class Store(context: Context) {
         get() = prefs.getString("subdl_key", "") ?: ""
         set(value) = prefs.edit { putString("subdl_key", value.trim()) }
 
+    /** Load a subtitle in [subtitleLanguage] automatically when a video starts. */
+    var autoSubtitles: Boolean
+        get() = prefs.getBoolean("auto_subs", true)
+        set(value) = prefs.edit { putBoolean("auto_subs", value) }
+
     var autoPlayNext: Boolean
         get() = prefs.getBoolean("autoplay_next", true)
         set(value) = prefs.edit { putBoolean("autoplay_next", value) }

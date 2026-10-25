@@ -176,6 +176,7 @@ class PlayerActivity : ComponentActivity() {
             watchInfo = runCatching { DflixApi.watchInfo(titleId, fileId) }.getOrNull()
             updateHeader()
             if (watchInfo?.subtitles?.isNotEmpty() == true) reloadKeepingPosition()
+            if (store.autoSubtitles && activeLocalSubtitle == null) autoSelectSubtitle(fileId)
         }
         startProgressLoop()
     }
@@ -308,6 +309,44 @@ class PlayerActivity : ComponentActivity() {
             })
         }
         showList("Subtitles", options.map { it.first }) { options[it].second() }
+    }
+
+    /**
+     * Turns on a subtitle in the preferred language without user action: an embedded or DFLIX track
+     * if the file has one, otherwise the best online match (exact file hash first, then most downloaded).
+     */
+    private suspend fun autoSelectSubtitle(forFileId: Long) {
+        val language = Language.byCode3(store.subtitleLanguage)
+        val tag = language.code2.substringBefore('-')
+
+        // Wait for the container to expose its tracks (embedded subtitles show up here).
+        val deadline = System.currentTimeMillis() + 15_000
+        while (player.currentTracks.isEmpty && System.currentTimeMillis() < deadline) delay(300)
+        if (forFileId != fileId) return
+
+        val existing = player.currentTracks.groups.firstOrNull { group ->
+            group.type == C.TRACK_TYPE_TEXT &&
+                (0 until group.length).any { group.getTrackFormat(it).language?.startsWith(tag) == true }
+        }
+        if (existing != null) {
+            val index = (0 until existing.length).first { existing.getTrackFormat(it).language?.startsWith(tag) == true }
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setOverrideForType(TrackSelectionOverride(existing.mediaTrackGroup, index))
+                .build()
+            return
+        }
+
+        val query = subtitleQuery(language)
+        val results = runCatching { subtitles.search(query).results }.getOrNull().orEmpty()
+        val best = results.firstOrNull { it.hashMatch }
+            ?: results.filter { !it.hearingImpaired }.maxByOrNull { it.downloads }
+            ?: results.maxByOrNull { it.downloads }
+        if (best == null || forFileId != fileId) return
+        val saved = runCatching { subtitles.download(best, query, forFileId) }.getOrNull() ?: return
+        if (forFileId != fileId) return
+        selectLocal(saved)
+        Toast.makeText(this, "${language.name} subtitles loaded" + if (best.hashMatch) " (exact match)" else "", Toast.LENGTH_SHORT).show()
     }
 
     private fun pickLanguageThenSearch() {

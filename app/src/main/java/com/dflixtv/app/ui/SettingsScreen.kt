@@ -42,6 +42,7 @@ fun SettingsScreen() {
     var osKey by remember { mutableStateOf(store.openSubtitlesApiKey) }
     var subdlKey by remember { mutableStateOf(store.subdlApiKey) }
     var autoplay by remember { mutableStateOf(store.autoPlayNext) }
+    var autoSubs by remember { mutableStateOf(store.autoSubtitles) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
 
     LazyColumn(contentPadding = PaddingValues(horizontal = gutter(), vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -61,6 +62,19 @@ fun SettingsScreen() {
             )
             KeyField("OpenSubtitles.com API key", osKey) { osKey = it; store.openSubtitlesApiKey = it }
             KeyField("SubDL API key", subdlKey) { subdlKey = it; store.subdlApiKey = it }
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Header("Auto-load subtitles", "Turns on a subtitle in the language above when a video starts, finding one online if needed.")
+                }
+                Switch(
+                    checked = autoSubs,
+                    onCheckedChange = { autoSubs = it; store.autoSubtitles = it },
+                    modifier = Modifier.focusRing(RoundedCornerShape(50)),
+                    colors = SwitchDefaults.colors(checkedTrackColor = Brand),
+                )
+            }
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
