@@ -36,6 +36,7 @@ object Updater {
     private data class Update(val versionCode: Int, val release: Release, val apk: Asset)
 
     suspend fun checkOnLaunch(context: Context) {
+        if (!BuildConfig.SELF_UPDATE) return
         val prefs = context.getSharedPreferences("updater", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         if (now - prefs.getLong("last_check", 0) < CHECK_INTERVAL_MS) return

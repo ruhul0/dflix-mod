@@ -70,6 +70,10 @@ fun SettingsScreen() {
             }
         }
         item {
+            if (!BuildConfig.SELF_UPDATE) {
+                Header("App version ${BuildConfig.VERSION_NAME}", "Updates come from Google Play.")
+                return@item
+            }
             Header("App version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", "Updates come from GitHub releases.")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = {

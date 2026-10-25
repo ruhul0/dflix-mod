@@ -25,6 +25,21 @@ Latest APK, always this URL: https://github.com/ruhul0/dflix-mod/releases/latest
 
 Allow "Install unknown apps" for whichever app opens the APK. After that, the app updates itself.
 
+## Google Play build
+
+There are two build flavors:
+
+| Flavor | Package | Updates | Output |
+|---|---|---|---|
+| `sideload` | `com.dflixtv.app` | GitHub self-updater | `dflix-tv.apk` on each release |
+| `play` | `com.dflixtv.app.play` | Google Play | `dflix-tv-play.aab` on each release, uploaded to the Play **internal testing** track |
+
+One-time Play setup:
+1. In Play Console create the app (TV, free). Upload the `dflix-tv-play.aab` from the latest GitHub release to **Testing → Internal testing** by hand. The API can't create an app, so the first upload has to be manual. Enroll in Play App Signing when asked; this repo's keystore becomes the upload key.
+2. Google Cloud Console: create a service account and a JSON key. Play Console → Users and permissions: invite the service account's email with release permissions for this app.
+3. Add the JSON as the repository secret `PLAY_SERVICE_ACCOUNT_JSON`. From then on, every push uploads to internal testing as a draft.
+4. After the first release is rolled out in Play Console, set the repository variable `PLAY_RELEASE_STATUS` to `completed` so new builds go straight to testers.
+
 ## How updates work
 
 Every push to `main` runs `.github/workflows/release.yml`, which builds a signed APK and publishes the release `v1.0.<run number>`. The run number is also the app's `versionCode`, so installed apps see a newer build and prompt to update. On first update, Android asks you to allow installs from DFLIX TV.

@@ -37,6 +37,21 @@ android {
         }
     }
 
+    flavorDimensions += "distribution"
+    productFlavors {
+        // Sideloaded APK: updates itself from GitHub releases.
+        create("sideload") {
+            dimension = "distribution"
+            buildConfigField("boolean", "SELF_UPDATE", "true")
+        }
+        // Google Play build: Play handles updates, so no self-updater or install permission.
+        create("play") {
+            dimension = "distribution"
+            applicationIdSuffix = ".play"
+            buildConfigField("boolean", "SELF_UPDATE", "false")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
