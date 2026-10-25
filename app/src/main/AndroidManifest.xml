@@ -29,6 +29,12 @@
             android:name=".player.PlayerActivity"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize"
             android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.player"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:screenOrientation="sensorLandscape" />
 
     </application>

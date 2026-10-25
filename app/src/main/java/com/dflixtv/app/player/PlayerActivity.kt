@@ -2,6 +2,17 @@ package com.dflixtv.app.player
 
 import android.app.AlertDialog
 import android.app.Dialog
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.graphics.drawable.Icon
+import android.os.Build
+import android.util.Rational
+import androidx.core.content.ContextCompat
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -24,6 +35,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -61,6 +73,8 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var titleView: TextView
     private lateinit var nextButton: Button
     private lateinit var loading: View
+    private lateinit var pipButton: Button
+    private var wasInPip = false
     private lateinit var player: ExoPlayer
 
     private val store get() = DflixApp.store
@@ -95,6 +109,10 @@ class PlayerActivity : ComponentActivity() {
         findViewById<Button>(R.id.btn_subtitles).setOnClickListener { showSubtitleMenu() }
         findViewById<Button>(R.id.btn_sub_delay).setOnClickListener { showSyncDialog() }
         nextButton.setOnClickListener { playNext() }
+        pipButton = findViewById(R.id.btn_pip)
+        pipButton.visibility = if (pipSupported) View.VISIBLE else View.GONE
+        pipButton.setOnClickListener { enterPip() }
+        ContextCompat.registerReceiver(this, pipReceiver, IntentFilter(ACTION_PIP_CONTROL), ContextCompat.RECEIVER_NOT_EXPORTED)
 
         player = buildPlayer()
         playerView.player = player
@@ -171,6 +189,10 @@ class PlayerActivity : ComponentActivity() {
                 .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
                 .build()
         }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) = updatePipParams()
+
+        override fun onVideoSizeChanged(videoSize: VideoSize) = updatePipParams()
 
         override fun onPlayerError(error: PlaybackException) {
             toast("Playback error: ${error.errorCodeName}")
@@ -533,17 +555,114 @@ class PlayerActivity : ComponentActivity() {
         super.onStop()
         saveProgress()
         player.pause()
+        // Stopping right after PiP means the user closed the floating window.
+        if (wasInPip) finish()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         dialog?.dismiss()
+        unregisterReceiver(pipReceiver)
         player.release()
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // A title picked while the player sits in PiP replaces what's playing.
+        setIntent(intent)
+        val newTitle = intent.getLongExtra(EXTRA_TITLE_ID, titleId)
+        if (newTitle != titleId) details = null
+        titleId = newTitle
+        load(intent.getLongExtra(EXTRA_FILE_ID, fileId), resume = true)
+    }
+
+    // region Picture-in-picture
+
+    private val pipSupported: Boolean
+        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+    private val pipReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.getIntExtra(EXTRA_PIP_ACTION, 0)) {
+                PIP_PLAY_PAUSE -> if (player.isPlaying) player.pause() else player.play()
+                PIP_BACK -> player.seekBack()
+                PIP_FORWARD -> player.seekForward()
+            }
+        }
+    }
+
+    private fun enterPip() {
+        if (!pipSupported || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        playerView.hideController()
+        runCatching { enterPictureInPictureMode(pipParams()) }
+    }
+
+    /** Leaving the app with Home while a video plays shrinks it into PiP (older Android). */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (pipSupported && player.isPlaying && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) enterPip()
+    }
+
+    private fun updatePipParams() {
+        if (!pipSupported || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        runCatching { setPictureInPictureParams(pipParams()) }
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.O)
+    private fun pipParams(): PictureInPictureParams {
+        val size = player.videoSize
+        val ratio = if (size.width > 0 && size.height > 0) {
+            // Android only accepts ratios between 1:2.39 and 2.39:1.
+            val r = size.width * size.pixelWidthHeightRatio / size.height
+            Rational((r.coerceIn(0.42f, 2.39f) * 1000).toInt(), 1000)
+        } else Rational(16, 9)
+        fun action(id: Int, icon: Int, title: String) = RemoteAction(
+            Icon.createWithResource(this, icon), title, title,
+            PendingIntent.getBroadcast(
+                this, id,
+                Intent(ACTION_PIP_CONTROL).setPackage(packageName).putExtra(EXTRA_PIP_ACTION, id),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            ),
+        )
+        val playing = player.isPlaying
+        return PictureInPictureParams.Builder()
+            .setAspectRatio(ratio)
+            .setActions(
+                listOf(
+                    action(PIP_BACK, androidx.media3.ui.R.drawable.exo_icon_rewind, "Back 10 seconds"),
+                    action(
+                        PIP_PLAY_PAUSE,
+                        if (playing) androidx.media3.ui.R.drawable.exo_icon_pause else androidx.media3.ui.R.drawable.exo_icon_play,
+                        if (playing) "Pause" else "Play",
+                    ),
+                    action(PIP_FORWARD, androidx.media3.ui.R.drawable.exo_icon_fastforward, "Forward 10 seconds"),
+                )
+            )
+            .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) setAutoEnterEnabled(playing).setSeamlessResizeEnabled(true) }
+            .build()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) wasInPip = true
+        else if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) wasInPip = false
+        // The tiny window shows just the video; controls return when it's expanded again.
+        playerView.useController = !isInPictureInPictureMode
+        topBar.visibility = View.GONE
+        dialog?.takeIf { isInPictureInPictureMode }?.dismiss()
+    }
+
+    // endregion
 
     companion object {
         private const val EXTRA_TITLE_ID = "title_id"
         private const val AUTO_SUBTITLE_WAIT_MS = 8_000L
+        private const val ACTION_PIP_CONTROL = "com.dflixtv.app.PIP_CONTROL"
+        private const val EXTRA_PIP_ACTION = "pip_action"
+        private const val PIP_PLAY_PAUSE = 1
+        private const val PIP_BACK = 2
+        private const val PIP_FORWARD = 3
         private const val EXTRA_FILE_ID = "file_id"
 
         fun start(context: Context, titleId: Long, fileId: Long) {

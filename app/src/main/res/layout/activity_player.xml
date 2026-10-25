@@ -56,6 +56,14 @@
             android:text="Subtitle sync" />
 
         <Button
+            android:id="@+id/btn_pip"
+            style="@style/PlayerButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="PiP"
+            android:visibility="gone" />
+
+        <Button
             android:id="@+id/btn_next"
             style="@style/PlayerButton"
             android:layout_width="wrap_content"
