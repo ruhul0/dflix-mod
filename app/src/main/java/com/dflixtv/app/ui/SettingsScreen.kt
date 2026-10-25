@@ -21,11 +21,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.Button
-import androidx.tv.material3.FilterChip
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Switch
-import androidx.tv.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
 import com.dflixtv.app.BuildConfig
 import com.dflixtv.app.DflixApp
 import com.dflixtv.app.subs.Language
@@ -43,14 +44,12 @@ fun SettingsScreen() {
     var autoplay by remember { mutableStateOf(store.autoPlayNext) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
 
-    LazyColumn(contentPadding = PaddingValues(horizontal = 48.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    LazyColumn(contentPadding = PaddingValues(horizontal = gutter(), vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item {
             Header("Subtitle language", "Used when searching subtitles online.")
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 6.dp)) {
                 items(Language.ALL) { lang ->
-                    FilterChip(selected = language == lang.code3, onClick = { language = lang.code3; store.subtitleLanguage = lang.code3 }) {
-                        Text(lang.name)
-                    }
+                    Pill(lang.name, selected = language == lang.code3, onClick = { language = lang.code3; store.subtitleLanguage = lang.code3 })
                 }
             }
         }
@@ -66,7 +65,12 @@ fun SettingsScreen() {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) { Header("Autoplay next episode", null) }
-                Switch(checked = autoplay, onCheckedChange = { autoplay = it; store.autoPlayNext = it })
+                Switch(
+                    checked = autoplay,
+                    onCheckedChange = { autoplay = it; store.autoPlayNext = it },
+                    modifier = Modifier.focusRing(RoundedCornerShape(50)),
+                    colors = SwitchDefaults.colors(checkedTrackColor = Brand),
+                )
             }
         }
         item {
@@ -76,7 +80,7 @@ fun SettingsScreen() {
             }
             Header("App version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", "Updates come from GitHub releases.")
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = {
+                Button(modifier = Modifier.focusRing(RoundedCornerShape(50)), onClick = {
                     updateStatus = "Checking…"
                     scope.launch { updateStatus = Updater.checkNow(context) }
                 }) { Text("Check for updates") }
@@ -96,8 +100,8 @@ private fun Header(title: String, subtitle: String?) {
 
 @Composable
 private fun KeyField(label: String, value: String, onChange: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(260.dp), style = MaterialTheme.typography.bodyMedium)
-        SearchTextField(value, onChange, "Not set", Modifier.fillMaxWidth(0.6f))
+    Column(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 6.dp))
+        SearchTextField(value, onChange, "Not set", Modifier.fillMaxWidth(if (LocalIsTv.current) 0.6f else 1f))
     }
 }

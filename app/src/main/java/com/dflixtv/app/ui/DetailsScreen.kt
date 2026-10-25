@@ -1,6 +1,8 @@
 package com.dflixtv.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -36,13 +38,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.tv.material3.Button
-import androidx.tv.material3.Card
-import androidx.tv.material3.CardDefaults
-import androidx.tv.material3.FilterChip
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
-import androidx.tv.material3.Text
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
 import coil3.compose.AsyncImage
 import com.dflixtv.app.DflixApp
 import com.dflixtv.app.data.DflixApi
@@ -69,6 +70,7 @@ class DetailsViewModel(private val titleId: Long) : ViewModel() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
     val vm: DetailsViewModel = viewModel(key = "details-$titleId") { DetailsViewModel(titleId) }
@@ -97,22 +99,24 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
         if (idx >= 0) seasonIndex = idx
     }
 
+    val isTv = LocalIsTv.current
     val playFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
+    LaunchedEffect(Unit) { if (isTv) runCatching { playFocus.requestFocus() } }
+    val buttonShape = RoundedCornerShape(50)
 
     Box(Modifier.fillMaxSize()) {
         Backdrop(details.backdropUrl, Modifier.fillMaxWidth().height(420.dp))
         LazyColumn(contentPadding = PaddingValues(bottom = 48.dp)) {
             item {
-                Row(Modifier.padding(start = 48.dp, end = 48.dp, top = 48.dp, bottom = 24.dp)) {
+                Row(Modifier.padding(start = gutter(), end = gutter(), top = if (isTv) 48.dp else 16.dp, bottom = 24.dp)) {
                     AsyncImage(
                         model = details.posterUrl,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.width(180.dp).aspectRatio(2f / 3f),
+                        modifier = Modifier.width(if (isTv) 180.dp else 110.dp).aspectRatio(2f / 3f),
                     )
-                    Column(Modifier.padding(start = 32.dp).fillMaxWidth(0.7f)) {
-                        Text(details.title, style = MaterialTheme.typography.displaySmall, maxLines = 2)
+                    Column(Modifier.padding(start = if (isTv) 32.dp else 16.dp).fillMaxWidth(if (isTv) 0.7f else 1f)) {
+                        Text(details.title, style = if (isTv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineSmall, maxLines = 2)
                         Text(
                             listOfNotNull(
                                 details.year?.toString(),
@@ -136,20 +140,27 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 8.dp),
                         )
-                        Row(Modifier.padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        FlowRow(Modifier.padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (playFile != null) {
                                 val label = buildString {
                                     append(if (resumeEntry != null) "Resume" else "Play")
                                     playFile.episodeCode?.let { append(" $it") }
                                 }
-                                Button(onClick = { PlayerActivity.start(context, titleId, playFile.id) }, Modifier.focusRequester(playFocus)) {
+                                Button(
+                                    onClick = { PlayerActivity.start(context, titleId, playFile.id) },
+                                    modifier = Modifier.focusRequester(playFocus).focusRing(buttonShape),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+                                ) {
                                     Text(label)
                                 }
                                 if (resumeEntry != null) {
-                                    OutlinedButton(onClick = {
-                                        store.savePosition(resumeEntry.copy(positionMs = 0))
-                                        PlayerActivity.start(context, titleId, playFile.id)
-                                    }) { Text("Start over") }
+                                    OutlinedButton(
+                                        onClick = {
+                                            store.savePosition(resumeEntry.copy(positionMs = 0))
+                                            PlayerActivity.start(context, titleId, playFile.id)
+                                        },
+                                        modifier = Modifier.focusRing(buttonShape),
+                                    ) { Text("Start over", color = Color.White) }
                                 }
                             } else {
                                 Text("No playable files", color = Color.White.copy(alpha = 0.6f))
@@ -157,11 +168,13 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
                         }
                         // Movies can come in several versions (e.g. 1080p and 2160p).
                         if (!details.isShow && details.files.size > 1) {
-                            Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 details.files.forEach { file ->
-                                    OutlinedButton(onClick = { PlayerActivity.start(context, titleId, file.id) }) {
-                                        Text(listOfNotNull(file.quality, file.codec, file.size?.let(::formatSize)).joinToString(" · "))
-                                    }
+                                    Pill(
+                                        listOfNotNull(file.quality, file.codec, file.size?.let(::formatSize)).joinToString(" · "),
+                                        selected = false,
+                                        onClick = { PlayerActivity.start(context, titleId, file.id) },
+                                    )
                                 }
                             }
                         }
@@ -171,23 +184,21 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
 
             if (details.isShow && seasonKeys.isNotEmpty()) {
                 item {
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 48.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(bottom = 12.dp),
-                    ) {
+                    PillRow {
                         items(seasonKeys.size) { i ->
-                            FilterChip(selected = i == seasonIndex, onClick = { seasonIndex = i }) {
-                                Text(seasonKeys[i]?.let { if (it == 0) "Specials" else "Season $it" } ?: "Episodes")
-                            }
+                            Pill(
+                                seasonKeys[i]?.let { if (it == 0) "Specials" else "Season $it" } ?: "Episodes",
+                                selected = i == seasonIndex,
+                                onClick = { seasonIndex = i },
+                            )
                         }
                     }
                 }
                 item {
                     val episodes = seasons[seasonKeys.getOrNull(seasonIndex)].orEmpty()
                     LazyRow(
-                        contentPadding = PaddingValues(horizontal = 48.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        contentPadding = PaddingValues(horizontal = gutter(), vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
                         modifier = Modifier.padding(bottom = 28.dp),
                     ) {
                         items(episodes, key = { it.id }) { ep ->
@@ -208,11 +219,10 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
 
 @Composable
 private fun EpisodeCard(file: MediaFile, progress: Float?, onClick: () -> Unit) {
-    Column(Modifier.width(280.dp)) {
-        Card(
+    Column(Modifier.width(if (LocalIsTv.current) 280.dp else 220.dp)) {
+        FocusCard(
             onClick = onClick,
             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-            shape = CardDefaults.shape(MaterialTheme.shapes.small),
         ) {
             Box(Modifier.fillMaxSize()) {
                 AsyncImage(

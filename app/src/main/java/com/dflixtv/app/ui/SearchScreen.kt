@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,8 +34,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import com.dflixtv.app.data.DflixApi
 import com.dflixtv.app.data.TitleSummary
 import kotlinx.coroutines.Job
@@ -85,8 +86,8 @@ fun SearchTextField(
         keyboardActions = KeyboardActions(onDone = { onDone() }),
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
-            .background(Color(0xFF1C1C22), MaterialTheme.shapes.small)
-            .border(2.dp, if (focused) Brand else Color.Transparent, MaterialTheme.shapes.small)
+            .background(Color(0xFF1C1C22), RoundedCornerShape(8.dp))
+            .border(2.dp, if (focused) Brand else Color.Transparent, RoundedCornerShape(8.dp))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         decorationBox = { inner ->
             Box {
@@ -107,16 +108,16 @@ fun SearchScreen(open: (Long) -> Unit) {
             onValueChange = vm::onQuery,
             placeholder = "Search movies, shows, anime…",
             onDone = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down) },
-            modifier = Modifier.padding(horizontal = 48.dp, vertical = 12.dp).fillMaxWidth(0.6f),
+            modifier = Modifier.padding(horizontal = gutter(), vertical = 12.dp).fillMaxWidth(if (LocalIsTv.current) 0.6f else 1f),
         )
         when {
             vm.results.isNotEmpty() -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(150.dp),
-                contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 12.dp, bottom = 48.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+                columns = GridCells.Adaptive(if (LocalIsTv.current) 150.dp else 105.dp),
+                contentPadding = PaddingValues(start = gutter(), end = gutter(), top = 12.dp, bottom = 48.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                items(vm.results, key = { it.id }) { t -> PosterCard(t, onClick = { open(t.id) }, width = 150.dp) }
+                items(vm.results, key = { it.id }) { t -> PosterCard(t, onClick = { open(t.id) }, width = if (LocalIsTv.current) 150.dp else 105.dp) }
             }
             vm.searching -> CenterMessage("Searching…")
             vm.query.isNotBlank() -> CenterMessage("No results for \"${vm.query}\"")
