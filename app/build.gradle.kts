@@ -26,7 +26,7 @@ android {
     val localSigning = Properties().apply {
         rootProject.file("keystore/keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
     }
-    fun signing(env: String, key: String): String? = System.getenv(env) ?: localSigning.getProperty(key)
+    fun signing(env: String, key: String): String? = System.getenv(env)?.ifBlank { null } ?: localSigning.getProperty(key)
 
     signingConfigs {
         create("release") {
