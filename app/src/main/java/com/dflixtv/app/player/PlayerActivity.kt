@@ -46,6 +46,8 @@ import com.dflixtv.app.subs.SubtitleQuery
 import com.dflixtv.app.subs.SubtitleRepository
 import com.dflixtv.app.subs.SubtitleResult
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -58,6 +60,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var topBar: LinearLayout
     private lateinit var titleView: TextView
     private lateinit var nextButton: Button
+    private lateinit var loading: View
     private lateinit var player: ExoPlayer
 
     private val store get() = DflixApp.store
@@ -88,6 +91,7 @@ class PlayerActivity : ComponentActivity() {
         topBar = findViewById(R.id.top_bar)
         titleView = findViewById(R.id.title)
         nextButton = findViewById(R.id.btn_next)
+        loading = findViewById(R.id.loading)
         findViewById<Button>(R.id.btn_subtitles).setOnClickListener { showSubtitleMenu() }
         findViewById<Button>(R.id.btn_sub_delay).setOnClickListener { showSyncDialog() }
         nextButton.setOnClickListener { playNext() }
@@ -183,20 +187,53 @@ class PlayerActivity : ComponentActivity() {
         pendingSubtitleId = activeLocalSubtitle?.let { subtitleId(it) }
         updateHeader()
 
-        // Start the stream right away; subtitles and metadata arrive shortly after.
+        // Prepare paused: the video buffers and exposes its embedded tracks while we gather
+        // subtitles, so playback starts once, with everything attached, instead of reloading.
         val start = if (resume) store.position(fileId) else 0L
+        val loadingFileId = fileId
+        player.playWhenReady = false
         player.setMediaItem(buildMediaItem(), start)
         player.prepare()
+        setStarting(true)
 
         lifecycleScope.launch {
-            if (details == null) details = runCatching { DflixApi.titlePage(titleId).first }.getOrNull()
+            val detailsJob = async { details ?: runCatching { DflixApi.titlePage(titleId).first }.getOrNull() }
+            val watchJob = async { runCatching { DflixApi.watchInfo(titleId, loadingFileId) }.getOrNull() }
+            details = detailsJob.await()
+            watchInfo = watchJob.await()
+            if (loadingFileId != fileId) return@launch
             applyAudioPreference()
-            watchInfo = runCatching { DflixApi.watchInfo(titleId, fileId) }.getOrNull()
             updateHeader()
-            if (watchInfo?.subtitles?.isNotEmpty() == true) reloadKeepingPosition()
-            if (store.autoSubtitles && activeLocalSubtitle == null) autoSelectSubtitle(fileId)
+
+            var rebuild = watchInfo?.subtitles?.isNotEmpty() == true
+            if (store.autoSubtitles && activeLocalSubtitle == null) {
+                val search = async { findAutoSubtitle(loadingFileId) }
+                val found = withTimeoutOrNull(AUTO_SUBTITLE_WAIT_MS) { search.await() }
+                if (found != null) {
+                    activeLocalSubtitle = found
+                    pendingSubtitleId = subtitleId(found)
+                    rebuild = true
+                } else if (search.isActive) {
+                    // Slow network: start now and attach the subtitle when it arrives.
+                    launch { search.await()?.let { if (loadingFileId == fileId) selectLocal(it) } }
+                }
+            }
+            if (loadingFileId != fileId) return@launch
+            if (rebuild) {
+                player.setMediaItem(buildMediaItem(), start)
+                player.prepare()
+            }
+            player.playWhenReady = true
+            setStarting(false)
         }
         startProgressLoop()
+    }
+
+    /** While starting, show a spinner instead of the paused player's controls. */
+    private fun setStarting(starting: Boolean) {
+        loading.visibility = if (starting) View.VISIBLE else View.GONE
+        playerView.controllerAutoShow = !starting
+        if (starting) playerView.hideController()
     }
 
     private fun buildMediaItem(): MediaItem {
@@ -331,17 +368,18 @@ class PlayerActivity : ComponentActivity() {
     }
 
     /**
-     * Turns on a subtitle in the preferred language without user action: an embedded or DFLIX track
-     * if the file has one, otherwise the best online match (exact file hash first, then most downloaded).
+     * Picks a subtitle in the preferred language without user action. An embedded track is selected
+     * in place and null returned; otherwise the best online match is downloaded and returned so the
+     * caller can attach it before playback starts.
      */
-    private suspend fun autoSelectSubtitle(forFileId: Long) {
+    private suspend fun findAutoSubtitle(forFileId: Long): SavedSubtitle? {
         val language = Language.byCode3(store.subtitleLanguage)
         val tag = language.code2.substringBefore('-')
 
-        // Wait for the container to expose its tracks (embedded subtitles show up here).
-        val deadline = System.currentTimeMillis() + 15_000
-        while (player.currentTracks.isEmpty && System.currentTimeMillis() < deadline) delay(300)
-        if (forFileId != fileId) return
+        // The paused player exposes the container's tracks (embedded subtitles show up here).
+        val deadline = System.currentTimeMillis() + 5_000
+        while (player.currentTracks.isEmpty && System.currentTimeMillis() < deadline) delay(200)
+        if (forFileId != fileId) return null
 
         val existing = player.currentTracks.groups.firstOrNull { group ->
             group.type == C.TRACK_TYPE_TEXT &&
@@ -353,18 +391,14 @@ class PlayerActivity : ComponentActivity() {
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                 .setOverrideForType(TrackSelectionOverride(existing.mediaTrackGroup, index))
                 .build()
-            return
+            return null
         }
 
         val query = subtitleQuery(language)
-        val results = runCatching { subtitles.search(query).results }.getOrNull().orEmpty()
         // Results arrive ranked by fit (matching IDs, length, release name, hash, popularity).
-        val best = results.firstOrNull()
-        if (best == null || forFileId != fileId) return
-        val saved = runCatching { subtitles.download(best, query, forFileId) }.getOrNull() ?: return
-        if (forFileId != fileId) return
-        selectLocal(saved)
-        Toast.makeText(this, "${language.name} subtitles loaded" + if (best.hashMatch) " (exact match)" else "", Toast.LENGTH_SHORT).show()
+        val best = runCatching { subtitles.search(query).results }.getOrNull()?.firstOrNull() ?: return null
+        if (forFileId != fileId) return null
+        return runCatching { subtitles.download(best, query, forFileId) }.getOrNull()
     }
 
     private fun pickLanguageThenSearch() {
@@ -509,6 +543,7 @@ class PlayerActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_TITLE_ID = "title_id"
+        private const val AUTO_SUBTITLE_WAIT_MS = 8_000L
         private const val EXTRA_FILE_ID = "file_id"
 
         fun start(context: Context, titleId: Long, fileId: Long) {

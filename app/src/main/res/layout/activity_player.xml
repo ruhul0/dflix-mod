@@ -10,8 +10,16 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:focusable="true"
-        app:show_buffering="when_playing"
+        app:show_buffering="always"
         app:show_subtitle_button="true" />
+
+    <ProgressBar
+        android:id="@+id/loading"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_gravity="center"
+        android:indeterminateTint="#FFFFFF"
+        android:visibility="gone" />
 
     <LinearLayout
         android:id="@+id/top_bar"
