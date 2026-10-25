@@ -94,6 +94,11 @@ data class TitleDetails(
     val genreList: List<String> get() = parseGenres(genres)
     val imdbId: String? get() = path?.let { Regex("""imdb-(tt\d+)""").find(it)?.groupValues?.get(1) }
 
+    fun toSummary() = TitleSummary(
+        id = id, kind = kind, title = title, year = year, posterPath = posterPath,
+        backdropPath = backdropPath, rating = rating, genres = genres, runtime = runtime, overview = overview,
+    )
+
     /** Episodes grouped by season, in order. Movies end up under a single null key. */
     val seasons: Map<Int?, List<MediaFile>>
         get() = files.sortedWith(compareBy({ it.season ?: 0 }, { it.episode ?: 0 }))

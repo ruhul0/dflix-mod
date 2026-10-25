@@ -62,6 +62,25 @@ class Store(context: Context) {
 
     // endregion
 
+    // region My List
+
+    fun myList(): List<TitleSummary> =
+        runCatching { json.decodeFromString<List<TitleSummary>>(prefs.getString("my_list", "[]")!!) }
+            .getOrDefault(emptyList())
+
+    fun isInMyList(titleId: Long): Boolean = myList().any { it.id == titleId }
+
+    /** Adds or removes [title]; returns true when it is now in the list. */
+    fun toggleMyList(title: TitleSummary): Boolean {
+        val list = myList()
+        val present = list.any { it.id == title.id }
+        val updated = if (present) list.filterNot { it.id == title.id } else listOf(title) + list
+        prefs.edit { putString("my_list", json.encodeToString(updated)) }
+        return !present
+    }
+
+    // endregion
+
     // region Downloaded subtitles
 
     fun savedSubtitles(fileId: Long): List<SavedSubtitle> =

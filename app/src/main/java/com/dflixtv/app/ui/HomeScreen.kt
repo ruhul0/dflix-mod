@@ -14,22 +14,31 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -50,6 +59,8 @@ class HomeViewModel : ViewModel() {
     var error by mutableStateOf<String?>(null)
         private set
     var continueWatching by mutableStateOf<List<ContinueEntry>>(emptyList())
+        private set
+    var myList by mutableStateOf<List<TitleSummary>>(emptyList())
         private set
     var featured by mutableStateOf<TitleSummary?>(null)
 
@@ -72,93 +83,195 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    fun refreshContinue() {
+    fun refreshLocal() {
         continueWatching = DflixApp.store.continueWatching()
+        myList = DflixApp.store.myList()
     }
 }
 
 @Composable
-fun HomeScreen(open: (Long) -> Unit) {
+fun HomeScreen(open: (Long) -> Unit, topInset: Dp, listState: LazyListState) {
     val vm: HomeViewModel = viewModel()
     val context = LocalContext.current
     val isTv = LocalIsTv.current
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshContinue() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshLocal() }
 
     if (vm.rows.isEmpty()) {
         CenterMessage(vm.error?.let { "Could not reach dflix.live: $it" } ?: "Loading…")
         return
     }
 
-    // The hero is the first list item, so it scrolls away with the rows.
-    LazyColumn(state = rememberLazyListState(), contentPadding = PaddingValues(bottom = 48.dp)) {
+    val trending = vm.rows.firstOrNull { it.label.startsWith("Trending") }
+    val others = vm.rows.filter { it !== trending }
+
+    // The billboard is the first list item, so it scrolls away under the header like Netflix.
+    LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 48.dp)) {
         vm.featured?.let { featured ->
-            item(key = "hero") { Hero(featured, onOpen = { open(featured.id) }) }
+            item(key = "hero") {
+                if (isTv) TvBillboard(featured, topInset, onInfo = { open(featured.id) }, onListChanged = vm::refreshLocal)
+                else PhoneBillboard(featured, topInset, onInfo = { open(featured.id) }, onListChanged = vm::refreshLocal)
+            }
         }
         if (vm.continueWatching.isNotEmpty()) {
             item(key = "continue") {
                 ContinueRow(vm.continueWatching) { PlayerActivity.start(context, it.titleId, it.fileId) }
             }
         }
-        items(vm.rows, key = { it.label }) { row ->
-            // On TV the hero follows the focused card, like other TV apps.
-            TitleRow(row.label, row.titles, onClick = { open(it.id) }, onFocused = { if (isTv) vm.featured = it })
+        if (vm.myList.isNotEmpty()) {
+            item(key = "mylist") { TitleRow("My List", vm.myList, onClick = { open(it.id) }) }
+        }
+        trending?.let { row ->
+            item(key = "top10") {
+                Top10Row("Top 10 Today", row.titles, onClick = { open(it.id) }, onFocused = { if (isTv) vm.featured = it })
+            }
+        }
+        items(others, key = { it.label }) { row ->
+            // On TV the billboard follows the focused card; "Recently Added" uses wide tiles for variety.
+            TitleRow(
+                row.label,
+                row.titles,
+                onClick = { open(it.id) },
+                onFocused = { if (isTv) vm.featured = it },
+                landscape = isTv && row.label.startsWith("Recently"),
+            )
         }
     }
 }
 
 @Composable
-private fun Hero(title: TitleSummary, onOpen: () -> Unit) {
-    val isTv = LocalIsTv.current
-    Box(Modifier.fillMaxWidth().height(if (isTv) 300.dp else 260.dp)) {
+private fun TvBillboard(title: TitleSummary, topInset: Dp, onInfo: () -> Unit, onListChanged: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val height = (LocalConfiguration.current.screenHeightDp * 0.72f).dp
+    var inList by remember(title.id) { mutableStateOf(DflixApp.store.isInMyList(title.id)) }
+    Box(Modifier.fillMaxWidth().height(height)) {
         Backdrop(title.backdropUrl, Modifier.fillMaxSize())
         Column(
             Modifier
                 .align(Alignment.BottomStart)
-                .padding(horizontal = gutter(), vertical = 16.dp)
-                .fillMaxWidth(if (isTv) 0.55f else 1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(start = gutter(), bottom = 28.dp, top = topInset)
+                .fillMaxWidth(0.45f),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(title.title, style = MaterialTheme.typography.headlineMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
-                listOfNotNull(
-                    title.year?.toString(),
-                    title.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) },
-                    title.genreList.take(3).joinToString(", ").ifEmpty { null },
-                ).joinToString("  ·  "),
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.75f),
+                title.title,
+                fontSize = 48.sp,
+                fontWeight = FontWeight.Black,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 52.sp,
             )
+            MetaLine(title)
             Text(
                 title.cleanOverview ?: "",
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = if (isTv) 3 else 2,
+                fontSize = 16.sp,
+                color = Color.White,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
-                color = Color.White.copy(alpha = 0.85f),
             )
-            // On phones the hero is tappable through this button; on TV focus drives the hero instead.
-            if (!isTv) {
-                Row {
-                    Button(
-                        onClick = onOpen,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                    ) { Text("Details") }
-                }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 6.dp)) {
+                NetflixButton("Play", onClick = { scope.launch { playTitle(context, title.id) } }, primary = true, icon = "▶")
+                NetflixButton("More info", onClick = onInfo, icon = "ⓘ")
+                NetflixButton(
+                    "My List",
+                    onClick = { inList = DflixApp.store.toggleMyList(title); onListChanged() },
+                    icon = if (inList) "✓" else "+",
+                )
             }
         }
     }
 }
 
 @Composable
+private fun PhoneBillboard(title: TitleSummary, topInset: Dp, onInfo: () -> Unit, onListChanged: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var inList by remember(title.id) { mutableStateOf(DflixApp.store.isInMyList(title.id)) }
+    Box(Modifier.fillMaxWidth()) {
+        // Blurred-feel backdrop behind a centered poster card, as in Netflix's phone app.
+        Backdrop(title.backdropUrl ?: title.posterUrl, Modifier.matchParentSize(), fadeLeft = false)
+        Column(
+            Modifier.fillMaxWidth().padding(top = topInset + 8.dp, start = 28.dp, end = 28.dp, bottom = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(2f / 3f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(CardColor)
+            ) {
+                AsyncImage(
+                    model = title.posterUrl,
+                    contentDescription = title.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color(0xEE000000))))
+                Column(
+                    Modifier.align(Alignment.BottomCenter).padding(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    GenreLine(title.genreList)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        NetflixButton(
+                            "Play",
+                            onClick = { scope.launch { playTitle(context, title.id) } },
+                            primary = true,
+                            icon = "▶",
+                            modifier = Modifier.weight(1f),
+                        )
+                        NetflixButton(
+                            "My List",
+                            onClick = { inList = DflixApp.store.toggleMyList(title); onListChanged() },
+                            icon = if (inList) "✓" else "+",
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+            Text(
+                "ⓘ  More info",
+                color = Dim,
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .padding(top = 10.dp)
+                    .focusRing()
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(onClick = onInfo)
+                    .padding(8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+fun MetaLine(title: TitleSummary) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        title.rating?.takeIf { it > 0 }?.let {
+            Text("★ %.1f".format(it), color = Color(0xFF46D369), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        }
+        title.year?.let { Text("$it", color = Color.White, fontSize = 15.sp) }
+        if (title.isShow) Badge("Series")
+        title.quality?.let { Badge(if (it.startsWith("2160")) "4K" else "HD") }
+        GenreLine(title.genreList)
+    }
+}
+
+@Composable
 private fun ContinueRow(entries: List<ContinueEntry>, onClick: (ContinueEntry) -> Unit) {
     val isTv = LocalIsTv.current
-    Column(Modifier.padding(bottom = 20.dp)) {
+    Column(Modifier.padding(bottom = 18.dp)) {
         SectionLabel("Continue Watching")
         LazyRow(
             contentPadding = PaddingValues(horizontal = gutter(), vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 8.dp),
         ) {
             items(entries, key = { it.titleId }) { entry ->
-                Column(Modifier.width(if (isTv) 260.dp else 200.dp)) {
+                Column(Modifier.width(if (isTv) 280.dp else 180.dp)) {
                     FocusCard(
                         onClick = { onClick(entry) },
                         modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
@@ -169,12 +282,26 @@ private fun ContinueRow(entries: List<ContinueEntry>, onClick: (ContinueEntry) -
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
                         )
+                        Text(
+                            "▶",
+                            color = Color.White,
+                            fontSize = 22.sp,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0x99000000))
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                        )
                         ProgressBar(entry.progress, Modifier.fillMaxWidth().align(Alignment.BottomStart))
                     }
-                    Text(entry.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, modifier = Modifier.padding(top = 6.dp))
-                    entry.subtitle?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, color = Color.White.copy(alpha = 0.6f))
-                    }
+                    Text(
+                        listOfNotNull(entry.title, entry.subtitle?.substringBefore(" · ")).joinToString(" · "),
+                        fontSize = 13.sp,
+                        color = Dim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
             }
         }
