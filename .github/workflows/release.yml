@@ -43,8 +43,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v1.0.${{ github.run_number }}"
-          cp app/build/outputs/apk/release/app-release.apk "dflix-tv-$TAG.apk"
-          gh release create "$TAG" "dflix-tv-$TAG.apk" \
+          # Fixed asset name keeps .../releases/latest/download/dflix-tv.apk stable for manual installs.
+          cp app/build/outputs/apk/release/app-release.apk dflix-tv.apk
+          gh release create "$TAG" dflix-tv.apk \
             --title "DFLIX TV $TAG" \
             --notes "$(git log -1 --pretty=%B)" \
             --target "$GITHUB_SHA"

@@ -16,6 +16,15 @@ An Android TV client for [dflix.live](https://dflix.live): browse, search and st
 - Remote, arrow keys and keyboard: arrows and Enter navigate, Esc goes back. In the player, Space plays/pauses and Left/Right seek 10 s.
 - Self-update: on launch the app checks this repo's latest GitHub release and offers to install it.
 
+## Install on a TV (no adb)
+
+Latest APK, always this URL: https://github.com/ruhul0/dflix-mod/releases/latest/download/dflix-tv.apk
+
+- **Downloader app** (free on the Play Store / Amazon Appstore): open it, enter the URL above, and choose Install.
+- **USB stick:** copy `dflix-tv.apk` onto it, then open it on the TV with a file manager (e.g. File Commander, X-plore).
+
+Allow "Install unknown apps" for whichever app opens the APK. After that, the app updates itself.
+
 ## How updates work
 
 Every push to `main` runs `.github/workflows/release.yml`, which builds a signed APK and publishes the release `v1.0.<run number>`. The run number is also the app's `versionCode`, so installed apps see a newer build and prompt to update. On first update, Android asks you to allow installs from DFLIX TV.
