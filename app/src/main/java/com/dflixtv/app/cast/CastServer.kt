@@ -49,6 +49,9 @@ object CastServer {
     private const val PREFERRED_PORT = 8611
     private const val TAG = "CastServer"
     private var server: MiniHttpServer? = null
+
+    /** The port phones connect to, or null when the server isn't running. */
+    val port: Int? get() = server?.port
     private var registration: NsdManager.RegistrationListener? = null
 
     fun start(context: Context) {

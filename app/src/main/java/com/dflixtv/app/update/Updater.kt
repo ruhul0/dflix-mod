@@ -14,6 +14,7 @@ import com.dflixtv.app.BuildConfig
 import com.dflixtv.app.DflixApp
 import com.dflixtv.app.data.DflixApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import okhttp3.Request
@@ -25,7 +26,12 @@ import java.io.IOException
  * attached on every push to main; the trailing build number is compared with our versionCode.
  */
 object Updater {
-    private const val CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L
+    /** Launch checks happen at most this often. */
+    private const val CHECK_INTERVAL_MS = 60 * 60 * 1000L
+    /** While the app stays open (a TV can run for days), check again this often. */
+    private const val RECHECK_WHILE_OPEN_MS = 6 * 60 * 60 * 1000L
+    /** "Later" hides that version's prompt for this long. */
+    private const val SNOOZE_MS = 12 * 60 * 60 * 1000L
 
     @Serializable
     private data class Release(val tag_name: String, val name: String? = null, val body: String? = null, val assets: List<Asset> = emptyList())
@@ -35,14 +41,23 @@ object Updater {
 
     private data class Update(val versionCode: Int, val release: Release, val apk: Asset)
 
-    suspend fun checkOnLaunch(context: Context) {
+    /** Checks on launch and then every few hours for as long as the app is open. */
+    suspend fun keepChecking(context: Context) {
         if (!BuildConfig.SELF_UPDATE) return
+        while (true) {
+            checkIfDue(context)
+            delay(RECHECK_WHILE_OPEN_MS)
+        }
+    }
+
+    private suspend fun checkIfDue(context: Context) {
         val prefs = context.getSharedPreferences("updater", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         if (now - prefs.getLong("last_check", 0) < CHECK_INTERVAL_MS) return
         prefs.edit { putLong("last_check", now) }
         val update = runCatching { findUpdate() }.getOrNull() ?: return
-        (context as? Activity)?.let { prompt(it, update) }
+        val snoozed = prefs.getInt("snoozed_code", 0) == update.versionCode && now < prefs.getLong("snoozed_until", 0)
+        if (!snoozed) (context as? Activity)?.let { prompt(it, update) }
     }
 
     /** Manual check from Settings; returns a status line. */
@@ -77,7 +92,12 @@ object Updater {
             .setTitle("Update available: ${update.release.tag_name}")
             .setMessage(update.release.body?.let(::unwrap)?.take(800)?.ifBlank { null } ?: "A new version of DFLIX TV is ready.")
             .setPositiveButton("Install") { _, _ -> download(activity, update) }
-            .setNegativeButton("Later", null)
+            .setNegativeButton("Later") { _, _ ->
+                activity.getSharedPreferences("updater", Context.MODE_PRIVATE).edit {
+                    putInt("snoozed_code", update.versionCode)
+                    putLong("snoozed_until", System.currentTimeMillis() + SNOOZE_MS)
+                }
+            }
             .show()
     }
 

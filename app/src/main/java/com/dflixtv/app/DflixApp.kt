@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import com.dflixtv.app.cast.CastServer
+import com.dflixtv.app.diag.CrashLog
 import com.dflixtv.app.ui.isTv
 import coil3.ImageLoader
 import coil3.PlatformContext
@@ -19,6 +20,7 @@ class DflixApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        CrashLog.install(this)
         store = Store(this)
         // Tracks whether any screen is showing: Android only lets the TV open the player for a
         // phone's "Play on TV" while the app is in front.

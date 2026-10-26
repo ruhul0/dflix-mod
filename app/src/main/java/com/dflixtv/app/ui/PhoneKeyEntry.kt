@@ -92,7 +92,7 @@ ${if (form) """<p>Paste keys for your TV. Only filled fields are saved.</p>
 }
 
 /** The TV's address on the local network, or null when it isn't connected. */
-private fun localAddress(context: Context): String? {
+internal fun localAddress(context: Context): String? {
     val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     val network = cm.activeNetwork ?: return null
     return cm.getLinkProperties(network)?.linkAddresses
@@ -101,7 +101,7 @@ private fun localAddress(context: Context): String? {
         ?.hostAddress
 }
 
-private fun qrBitmap(text: String, size: Int = 512): Bitmap {
+internal fun qrBitmap(text: String, size: Int = 512): Bitmap {
     val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size, mapOf(com.google.zxing.EncodeHintType.MARGIN to 1))
     val pixels = IntArray(size * size) { i -> if (matrix[i % size, i / size]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt() }
     return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)

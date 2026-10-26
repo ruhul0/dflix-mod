@@ -29,7 +29,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -123,6 +122,7 @@ fun SettingsScreen() {
                 )
             }
         }
+        item { DiagnosticsSection() }
         item {
             if (!BuildConfig.SELF_UPDATE) {
                 Header("App version ${BuildConfig.VERSION_NAME}", "Updates come from Google Play.")
@@ -130,10 +130,10 @@ fun SettingsScreen() {
             }
             Header("App version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", "Updates come from GitHub releases.")
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(modifier = Modifier.focusRing(RoundedCornerShape(50)), onClick = {
+                NetflixButton("Check for updates", onClick = {
                     updateStatus = "Checking…"
                     scope.launch { updateStatus = Updater.checkNow(context) }
-                }) { Text("Check for updates") }
+                }, icon = "⟳")
                 updateStatus?.let { Text(it, Modifier.padding(start = 16.dp), color = Color.White.copy(alpha = 0.7f)) }
             }
         }

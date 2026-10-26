@@ -171,7 +171,7 @@ private fun App() {
     }
     val context = LocalContext.current
 
-    LaunchedEffect(Unit) { Updater.checkOnLaunch(context) }
+    LaunchedEffect(Unit) { Updater.keepChecking(context) }
 
     BackHandler(enabled = backStack.size > 1) {
         focusMemory.pop()
