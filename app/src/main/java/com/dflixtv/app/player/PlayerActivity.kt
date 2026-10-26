@@ -18,14 +18,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.annotation.SuppressLint
-import android.media.AudioManager
-import android.provider.Settings
-import android.view.GestureDetector
-import android.view.MotionEvent
 import com.dflixtv.app.ui.isTv
-import kotlin.math.roundToInt
-import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -37,7 +30,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
-import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
@@ -79,7 +71,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
-import java.util.Locale
 
 @UnstableApi
 class PlayerActivity : ComponentActivity() {
@@ -107,17 +98,8 @@ class PlayerActivity : ComponentActivity() {
     private var dialog: Dialog? = null
     private var networkRetries = 0
     private var startOverrideMs: Long? = null
-    private lateinit var gestureHint: TextView
-    private var hideHint: Runnable? = null
-    /** Sleep timer: stop at this elapsed-realtime, or when the current episode ends. */
-    private var sleepAtElapsed: Long? = null
-    private var sleepAfterEpisode = false
-    private var sleepTimerMinutes: Int? = null
-    private lateinit var nextCard: View
-    private lateinit var nextNowButton: Button
-    private lateinit var nextTitle: TextView
-    /** Seconds left before the next episode starts, or null while the card is hidden. */
-    private var nextCountdown: Int? = null
+    private val sleepTimer = SleepTimer()
+    private lateinit var nextCard: NextEpisodeCard
     private var nextCardDismissed = false
 
     private val currentFile: MediaFile? get() = details?.files?.firstOrNull { it.id == fileId }
@@ -139,10 +121,8 @@ class PlayerActivity : ComponentActivity() {
         loading = findViewById(R.id.loading)
         findViewById<Button>(R.id.btn_subtitles).setOnClickListener { showAudioSubtitlePanel() }
         nextButton.setOnClickListener { playNext() }
-        nextCard = findViewById(R.id.next_card)
-        nextTitle = findViewById(R.id.next_title)
-        nextNowButton = findViewById(R.id.btn_next_now)
-        nextNowButton.setOnClickListener { hideNextCard(); playNext() }
+        nextCard = NextEpisodeCard(findViewById(R.id.next_card), findViewById(R.id.next_title), findViewById(R.id.btn_next_now))
+        findViewById<Button>(R.id.btn_next_now).setOnClickListener { hideNextCard(); playNext() }
         findViewById<Button>(R.id.btn_next_cancel).setOnClickListener { nextCardDismissed = true; hideNextCard() }
         pipButton = findViewById(R.id.btn_pip)
         pipButton.visibility = if (pipSupported) View.VISIBLE else View.GONE
@@ -162,13 +142,12 @@ class PlayerActivity : ComponentActivity() {
             )
         })
         playerView.requestFocus()
-        gestureHint = findViewById(R.id.gesture_hint)
-        if (!isTv()) setUpTouchGestures()
+        if (!isTv()) PhoneGestures(this, playerView, player, findViewById(R.id.gesture_hint)).attach()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
-                    nextCountdown != null -> { nextCardDismissed = true; hideNextCard() }
+                    nextCard.isShowing -> { nextCardDismissed = true; hideNextCard() }
                     playerView.isControllerFullyVisible -> playerView.hideController()
                     else -> finish()
                 }
@@ -224,7 +203,7 @@ class PlayerActivity : ComponentActivity() {
         override fun onPlaybackStateChanged(state: Int) {
             if (state == Player.STATE_ENDED) {
                 saveProgress()
-                if (store.autoPlayNext && nextFileId() != null && !sleepAfterEpisode) playNext() else finish()
+                if (store.autoPlayNext && nextFileId() != null && !sleepTimer.afterEpisode) playNext() else finish()
             }
         }
 
@@ -329,7 +308,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun buildMediaItem(): MediaItem {
         val configs = buildList {
-            watchInfo?.subtitles?.filter { isEnglishOrUnknown(it.lang) }?.forEach { sub ->
+            watchInfo?.subtitles?.filter { TrackLabels.isEnglishOrUnknown(it.lang) }?.forEach { sub ->
                 add(
                     MediaItem.SubtitleConfiguration.Builder(Uri.parse(DflixApi.absolute(sub.src)))
                         .setId("dflix-${sub.id}")
@@ -407,45 +386,26 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Near the end of an episode, shows "Next episode" with a countdown; when it runs out the next
-     * episode starts, skipping the rest of the credits. The countdown pauses with the video.
-     */
+    /** Drives the "Next episode" card; when its countdown runs out the next episode starts. */
     private fun updateNextCard() {
         val next = nextFileId()
         val duration = player.duration
-        if (!store.autoPlayNext || next == null || duration == C.TIME_UNSET || nextCardDismissed || sleepAfterEpisode || isInPictureInPictureMode) {
-            hideNextCard()
-            return
-        }
-        val remaining = duration - player.currentPosition
-        if (remaining > NEXT_CARD_LEAD_MS) {
-            hideNextCard()
-            return
-        }
-        val countdown = nextCountdown
-        if (countdown == null) {
+        val eligible = store.autoPlayNext && next != null && duration != C.TIME_UNSET &&
+            !nextCardDismissed && !sleepTimer.afterEpisode && !isInPictureInPictureMode
+        val remaining = if (eligible) duration - player.currentPosition else null
+        val due = nextCard.tick(remaining, player.isPlaying) {
             val file = details?.files?.firstOrNull { it.id == next }
-            nextTitle.text = listOfNotNull(file?.episodeCode, file?.episodeTitle).joinToString(" · ").ifEmpty { "Up next" }
-            nextCountdown = NEXT_COUNTDOWN_S
-            nextCard.visibility = View.VISIBLE
-            nextNowButton.requestFocus()
-        } else if (player.isPlaying) {
-            if (countdown <= 1) {
-                hideNextCard()
-                saveProgress()
-                playNext()
-                return
-            }
-            nextCountdown = countdown - 1
+            listOfNotNull(file?.episodeCode, file?.episodeTitle).joinToString(" · ").ifEmpty { "Up next" }
         }
-        nextNowButton.text = "Play now (${nextCountdown})"
+        if (due) {
+            playerView.requestFocus()
+            saveProgress()
+            playNext()
+        }
     }
 
     private fun checkSleepTimer() {
-        val at = sleepAtElapsed ?: return
-        if (SystemClock.elapsedRealtime() < at) return
-        sleepAtElapsed = null
+        if (!sleepTimer.consumeIfDue()) return
         saveProgress()
         player.pause()
         toast("Sleep timer: stopped")
@@ -453,23 +413,8 @@ class PlayerActivity : ComponentActivity() {
         finish()
     }
 
-    private fun setSleepTimer(minutes: Int?, endOfEpisode: Boolean) {
-        sleepAtElapsed = minutes?.let { SystemClock.elapsedRealtime() + it * 60_000L }
-        sleepAfterEpisode = endOfEpisode
-        toast(
-            when {
-                endOfEpisode -> "Playback stops at the end of this episode"
-                minutes != null -> "Playback stops in $minutes minutes"
-                else -> "Sleep timer off"
-            }
-        )
-    }
-
     private fun hideNextCard() {
-        if (nextCountdown == null) return
-        nextCountdown = null
-        nextCard.visibility = View.GONE
-        playerView.requestFocus()
+        if (nextCard.hide()) playerView.requestFocus()
     }
 
     /** Keeps the phone remote's view of the TV current. */
@@ -558,7 +503,7 @@ class PlayerActivity : ComponentActivity() {
         val audio = audioTracks.mapIndexed { position, (group, index) ->
             val format = group.getTrackFormat(index)
             val fallback = if (audioTracks.size == 1) "Original" else "Audio ${position + 1}"
-            PanelOption(audioLabel(format, original, fallback), group.isTrackSelected(index)) {
+            PanelOption(TrackLabels.audioLabel(format, original, fallback), group.isTrackSelected(index)) {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                     .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
                     .build()
@@ -570,7 +515,7 @@ class PlayerActivity : ComponentActivity() {
         }
 
         val textGroups = tracks.filter { it.type == C.TRACK_TYPE_TEXT }
-        val englishTrack = { group: Tracks.Group, index: Int -> isEnglishOrUnknown(group.getTrackFormat(index).language) }
+        val englishTrack = { group: Tracks.Group, index: Int -> TrackLabels.isEnglishOrUnknown(group.getTrackFormat(index).language) }
         val subtitlesOff = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT) ||
             textGroups.none { it.isSelected }
         val subtitleOptions = buildList {
@@ -582,7 +527,7 @@ class PlayerActivity : ComponentActivity() {
             textGroups.forEach { group ->
                 (0 until group.length).filter { group.isTrackSupported(it) && englishTrack(group, it) }.forEach { index ->
                     val format = group.getTrackFormat(index)
-                    add(PanelOption(subtitleLabel(format), !subtitlesOff && group.isTrackSelected(index)) {
+                    add(PanelOption(TrackLabels.subtitleLabel(format), !subtitlesOff && group.isTrackSelected(index)) {
                         selectSubtitleTrack(group, index)
                     })
                 }
@@ -596,18 +541,15 @@ class PlayerActivity : ComponentActivity() {
             PanelOption(label, player.playbackParameters.speed == value) { player.setPlaybackSpeed(value) }
         }
 
-        val minutesLeft = sleepAtElapsed?.let { ((it - SystemClock.elapsedRealtime()) / 60_000).coerceAtLeast(0) + 1 }
+        val minutesLeft = sleepTimer.minutesLeft
         val sleep = buildList {
-            add(PanelOption("Off", sleepAtElapsed == null && !sleepAfterEpisode) { setSleepTimer(null, false) })
+            add(PanelOption("Off", sleepTimer.isOff) { toast(sleepTimer.set(null, false)) })
             if (nextFileId() != null || details?.isShow == true) {
-                add(PanelOption("This episode", sleepAfterEpisode) { setSleepTimer(null, true) })
+                add(PanelOption("This episode", sleepTimer.afterEpisode) { toast(sleepTimer.set(null, true)) })
             }
             listOf(15, 30, 60, 90).forEach { m ->
-                val active = minutesLeft != null && sleepTimerMinutes == m
-                add(PanelOption(if (active) "$m min ($minutesLeft left)" else "$m min", active) {
-                    sleepTimerMinutes = m
-                    setSleepTimer(m, false)
-                })
+                val active = sleepTimer.isRunning(m)
+                add(PanelOption(if (active) "$m min ($minutesLeft left)" else "$m min", active) { toast(sleepTimer.set(m, false)) })
             }
         }
 
@@ -642,57 +584,8 @@ class PlayerActivity : ComponentActivity() {
             .build()
     }
 
-    /** Subtitles are English only; tracks without a language tag are usually English too. */
-    private fun isEnglishOrUnknown(language: String?): Boolean =
-        language == null || language == "und" || language.substringBefore('-').lowercase() in setOf("en", "eng")
-
     private fun applySubtitleScale() {
         playerView.subtitleView?.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * store.subtitleScale)
-    }
-
-    private fun languageName(tag: String?): String? =
-        tag?.takeUnless { it == "und" }?.let { Locale.forLanguageTag(it).getDisplayLanguage(Locale.ENGLISH) }?.takeIf { it.isNotBlank() }
-
-    /** "English [Original] · Dolby Digital 5.1" */
-    private fun audioLabel(format: Format, original: String?, fallback: String): String {
-        val name = languageName(format.language) ?: format.label ?: fallback
-        val codec = when (format.sampleMimeType) {
-            MimeTypes.AUDIO_AC3 -> "Dolby Digital"
-            MimeTypes.AUDIO_E_AC3, MimeTypes.AUDIO_E_AC3_JOC -> "Dolby Digital Plus"
-            MimeTypes.AUDIO_TRUEHD -> "Dolby TrueHD"
-            MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_HD, MimeTypes.AUDIO_DTS_EXPRESS -> "DTS"
-            else -> null
-        }
-        val channels = when (format.channelCount) {
-            1 -> "Mono"
-            2 -> "Stereo"
-            6 -> "5.1"
-            8 -> "7.1"
-            else -> null
-        }
-        val isOriginal = original != null && format.language?.substringBefore('-') == original
-        val extra = format.label?.takeIf { languageName(format.language) != null && !it.equals(name, ignoreCase = true) }
-        return buildString {
-            append(name)
-            if (isOriginal) append(" [Original]")
-            listOfNotNull(codec, channels).joinToString(" ").takeIf { it.isNotEmpty() }?.let { append(" · ").append(it) }
-            extra?.let { append(" · ").append(it.take(30)) }
-        }
-    }
-
-    /** "English", "English · Downloaded", "English · CC". */
-    private fun subtitleLabel(format: Format): String {
-        val name = languageName(format.language)
-        // Downloaded subtitles are labelled with their release name; that's noise here.
-        val downloaded = format.id?.contains("local-") == true
-        val label = format.label?.takeIf { !downloaded && it.isNotBlank() && (name == null || !it.startsWith(name, ignoreCase = true)) }
-        val tags = buildList {
-            if (downloaded) add("Online")
-            if (format.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND != 0) add("CC")
-            if (format.selectionFlags and C.SELECTION_FLAG_FORCED != 0) add("Forced")
-        }
-        return listOfNotNull(name ?: label ?: "Subtitles", label?.takeIf { name != null }, tags.joinToString(" ").ifEmpty { null })
-            .joinToString(" · ")
     }
 
 
@@ -809,7 +702,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // While the "Next episode" card is up, arrows and OK move between its buttons.
-        if (nextCountdown != null && event.keyCode in CARD_KEYS) return super.dispatchKeyEvent(event)
+        if (nextCard.isShowing && event.keyCode in CARD_KEYS) return super.dispatchKeyEvent(event)
         when (event.keyCode) {
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND,
@@ -878,81 +771,6 @@ class PlayerActivity : ComponentActivity() {
         startOverrideMs = intent.getLongExtra(EXTRA_START_MS, -1).takeIf { it >= 0 }
         load(intent.getLongExtra(EXTRA_FILE_ID, fileId), resume = true)
     }
-
-    // region Phone gestures
-
-    /**
-     * YouTube-style touch controls on phones: double-tap a side to skip 10 s, drag up/down on the
-     * left for brightness and on the right for volume. Taps on the player's own buttons never get
-     * here, because PlayerView only passes on touches its children didn't consume.
-     */
-    @SuppressLint("ClickableViewAccessibility")
-    private fun setUpTouchGestures() {
-        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val maxVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        var adjusting: String? = null // "brightness" or "volume" while a vertical drag is in progress
-        var startLevel = 0f
-
-        val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean {
-                adjusting = null
-                return true
-            }
-
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                if (playerView.isControllerFullyVisible) playerView.hideController() else playerView.showController()
-                return true
-            }
-
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                if (e.x < playerView.width / 2f) {
-                    player.seekBack()
-                    showHint("« 10s")
-                } else {
-                    player.seekForward()
-                    showHint("10s »")
-                }
-                return true
-            }
-
-            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-                val start = e1 ?: return false
-                val dy = start.y - e2.y
-                if (adjusting == null) {
-                    // Only clearly vertical drags adjust; anything else is left alone.
-                    if (kotlin.math.abs(dy) < 24 || kotlin.math.abs(dy) < kotlin.math.abs(e2.x - start.x)) return false
-                    adjusting = if (start.x < playerView.width / 2f) "brightness" else "volume"
-                    startLevel = if (adjusting == "brightness") currentBrightness()
-                    else audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume
-                }
-                // A full-height drag covers the whole range.
-                val level = (startLevel + dy / playerView.height).coerceIn(0f, 1f)
-                if (adjusting == "brightness") {
-                    window.attributes = window.attributes.apply { screenBrightness = level.coerceAtLeast(0.01f) }
-                    showHint("☀ ${(level * 100).toInt()}%")
-                } else {
-                    val volume = (level * maxVolume).roundToInt()
-                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
-                    showHint("🔊 ${volume * 100 / maxVolume}%")
-                }
-                return true
-            }
-        })
-        playerView.setOnTouchListener { _, event -> detector.onTouchEvent(event) }
-    }
-
-    private fun currentBrightness(): Float =
-        window.attributes.screenBrightness.takeIf { it >= 0 }
-            ?: runCatching { Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f }.getOrDefault(0.5f)
-
-    private fun showHint(text: String) {
-        gestureHint.text = text
-        gestureHint.visibility = View.VISIBLE
-        hideHint?.let(gestureHint::removeCallbacks)
-        hideHint = Runnable { gestureHint.visibility = View.GONE }.also { gestureHint.postDelayed(it, 700) }
-    }
-
-    // endregion
 
     // region Picture-in-picture
 
@@ -1040,8 +858,6 @@ class PlayerActivity : ComponentActivity() {
         private const val AUTO_SUBTITLE_WAIT_MS = 8_000L
         private const val MAX_NETWORK_RETRIES = 3
         private val ENGLISH = Language.byCode3("eng")
-        private const val NEXT_CARD_LEAD_MS = 30_000L
-        private const val NEXT_COUNTDOWN_S = 10
         private val CARD_KEYS = setOf(
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
