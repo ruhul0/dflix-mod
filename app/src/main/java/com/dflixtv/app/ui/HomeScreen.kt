@@ -46,11 +46,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.dflixtv.app.DflixApp
+import com.dflixtv.app.data.AiSuggest
 import com.dflixtv.app.data.ContinueEntry
 import com.dflixtv.app.data.DflixApi
 import com.dflixtv.app.data.HomeRow
 import com.dflixtv.app.data.TitleSummary
 import com.dflixtv.app.player.PlayerActivity
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class HomeViewModel : ViewModel() {
@@ -62,6 +64,9 @@ class HomeViewModel : ViewModel() {
         private set
     var myList by mutableStateOf<List<TitleSummary>>(emptyList())
         private set
+    var topPicks by mutableStateOf(AiSuggest.cachedForYou())
+        private set
+    private var picksJob: Job? = null
     var featured by mutableStateOf<TitleSummary?>(null)
 
     init {
@@ -86,6 +91,12 @@ class HomeViewModel : ViewModel() {
     fun refreshLocal() {
         continueWatching = DflixApp.store.continueWatching()
         myList = DflixApp.store.myList()
+        // AI picks refresh in the background when the viewer's history changed or once a day.
+        if (picksJob?.isActive != true) {
+            picksJob = viewModelScope.launch {
+                runCatching { AiSuggest.refreshForYou() }.getOrNull()?.let { topPicks = it }
+            }
+        }
     }
 }
 
@@ -120,6 +131,11 @@ fun HomeScreen(open: (Long) -> Unit, topInset: Dp, listState: LazyListState) {
         }
         if (vm.myList.isNotEmpty()) {
             item(key = "mylist") { TitleRow("My List", vm.myList, onClick = { open(it.id) }) }
+        }
+        if (vm.topPicks.isNotEmpty()) {
+            item(key = "picks") {
+                TitleRow("Top Picks for You", vm.topPicks, onClick = { open(it.id) }, onFocused = { if (isTv) vm.featured = it })
+            }
         }
         trending?.let { row ->
             item(key = "top10") {

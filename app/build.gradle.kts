@@ -19,6 +19,11 @@ android {
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
         buildConfigField("String", "UPDATE_REPO", "\"ruhul0/dflix-mod\"")
+        // AI suggestions: the OpenRouter key comes from local.properties (openrouter.key), never from git.
+        val localProps = Properties().apply {
+            rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+        }
+        buildConfigField("String", "OPENROUTER_KEY", "\"${localProps.getProperty("openrouter.key", "")}\"")
     }
 
     // A fixed key is required so installed apps accept updates built by CI. CI passes it via

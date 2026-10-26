@@ -22,6 +22,11 @@ class Store(context: Context) {
         get() = prefs.getString("os_key", "") ?: ""
         set(value) = prefs.edit { putString("os_key", value.trim()) }
 
+    /** Overrides the built-in OpenRouter key used for AI suggestions. */
+    var openRouterApiKey: String
+        get() = prefs.getString("openrouter_key", "") ?: ""
+        set(value) = prefs.edit { putString("openrouter_key", value.trim()) }
+
     var subdlApiKey: String
         get() = prefs.getString("subdl_key", "") ?: ""
         set(value) = prefs.edit { putString("subdl_key", value.trim()) }
@@ -85,6 +90,14 @@ class Store(context: Context) {
         prefs.edit { putString("my_list", json.encodeToString(updated)) }
         return !present
     }
+
+    // endregion
+
+    // region AI suggestions
+
+    var aiForYou: AiSuggest.Cached?
+        get() = prefs.getString("ai_for_you", null)?.let { runCatching { json.decodeFromString<AiSuggest.Cached>(it) }.getOrNull() }
+        set(value) = prefs.edit { if (value == null) remove("ai_for_you") else putString("ai_for_you", json.encodeToString(value)) }
 
     // endregion
 

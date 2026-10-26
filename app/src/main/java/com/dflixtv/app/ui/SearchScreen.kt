@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -22,7 +23,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -36,6 +39,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.dflixtv.app.data.AiSuggest
 import com.dflixtv.app.data.DflixApi
 import com.dflixtv.app.data.TitleSummary
 import kotlinx.coroutines.Job
@@ -49,10 +53,32 @@ class SearchViewModel : ViewModel() {
         private set
     var searching by mutableStateOf(false)
         private set
+    /** True while the results are AI picks for the query rather than title matches. */
+    var aiMode by mutableStateOf(false)
+        private set
+    var aiError by mutableStateOf<String?>(null)
+        private set
     private var job: Job? = null
+
+    fun askAi() {
+        val text = query.trim().takeIf { it.isNotEmpty() } ?: return
+        job?.cancel()
+        aiMode = true
+        aiError = null
+        results = emptyList()
+        job = viewModelScope.launch {
+            searching = true
+            runCatching { AiSuggest.search(text) }
+                .onSuccess { results = it }
+                .onFailure { aiError = it.message }
+            searching = false
+        }
+    }
 
     fun onQuery(text: String) {
         query = text
+        aiMode = false
+        aiError = null
         job?.cancel()
         if (text.isBlank()) {
             results = emptyList()
@@ -102,14 +128,29 @@ fun SearchTextField(
 fun SearchScreen(open: (Long) -> Unit) {
     val vm: SearchViewModel = viewModel()
     val focusManager = LocalFocusManager.current
+    val isTv = LocalIsTv.current
     Column(Modifier.fillMaxSize()) {
-        SearchTextField(
-            value = vm.query,
-            onValueChange = vm::onQuery,
-            placeholder = "Search movies, shows, anime…",
-            onDone = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down) },
-            modifier = Modifier.padding(horizontal = gutter(), vertical = 12.dp).fillMaxWidth(if (LocalIsTv.current) 0.6f else 1f),
-        )
+        Row(
+            Modifier.padding(horizontal = gutter(), vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SearchTextField(
+                value = vm.query,
+                onValueChange = vm::onQuery,
+                placeholder = if (AiSuggest.isAvailable) "Search, or describe what you feel like watching" else "Search movies, shows, anime…",
+                // Keyboard "done" goes to Ask AI when it's there, otherwise down to the results.
+                onDone = {
+                    val aiButton = AiSuggest.isAvailable && vm.query.isNotBlank()
+                    focusManager.moveFocus(if (aiButton) FocusDirection.Right else FocusDirection.Down)
+                },
+                modifier = if (isTv) Modifier.fillMaxWidth(0.6f) else Modifier.weight(1f),
+            )
+            if (AiSuggest.isAvailable && vm.query.isNotBlank()) {
+                NetflixButton("Ask AI", onClick = vm::askAi, icon = "✨")
+            }
+        }
+        if (vm.aiMode && vm.results.isNotEmpty()) SectionLabel("AI picks for \"${vm.query.trim()}\"")
         when {
             vm.results.isNotEmpty() -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(if (LocalIsTv.current) 150.dp else 105.dp),
@@ -119,8 +160,12 @@ fun SearchScreen(open: (Long) -> Unit) {
             ) {
                 items(vm.results, key = { it.id }) { t -> PosterCard(t, onClick = { open(t.id) }, width = if (LocalIsTv.current) 150.dp else 105.dp) }
             }
-            vm.searching -> CenterMessage("Searching…")
-            vm.query.isNotBlank() -> CenterMessage("No results for \"${vm.query}\"")
+            vm.searching -> CenterMessage(if (vm.aiMode) "Asking AI… this can take up to a minute" else "Searching…")
+            vm.aiError != null -> RetryMessage("AI suggestions failed: ${vm.aiError}", vm::askAi)
+            vm.aiMode -> CenterMessage("None of the AI's picks are on DFLIX. Try describing it differently.")
+            vm.query.isNotBlank() -> CenterMessage(
+                if (AiSuggest.isAvailable) "No results for \"${vm.query}\". Try ✨ Ask AI." else "No results for \"${vm.query}\""
+            )
             else -> CenterMessage("Type to search the DFLIX library")
         }
     }

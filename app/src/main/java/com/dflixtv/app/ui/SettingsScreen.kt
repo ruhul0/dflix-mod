@@ -42,6 +42,7 @@ fun SettingsScreen() {
     var audioLanguage by remember { mutableStateOf(store.audioLanguage) }
     var osKey by remember { mutableStateOf(store.openSubtitlesApiKey) }
     var subdlKey by remember { mutableStateOf(store.subdlApiKey) }
+    var aiKey by remember { mutableStateOf(store.openRouterApiKey) }
     var autoplay by remember { mutableStateOf(store.autoPlayNext) }
     var autoSubs by remember { mutableStateOf(store.autoSubtitles) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
@@ -74,6 +75,14 @@ fun SettingsScreen() {
             )
             KeyField("OpenSubtitles.com API key", osKey) { osKey = it; store.openSubtitlesApiKey = it }
             KeyField("SubDL API key", subdlKey) { subdlKey = it; store.subdlApiKey = it }
+        }
+        item {
+            Header(
+                "AI suggestions",
+                "Top Picks for You on Home and Ask AI in Search use free AI models from OpenRouter. " +
+                    "Add your own free key (openrouter.ai/keys) if the built-in one is busy.",
+            )
+            KeyField("OpenRouter API key", aiKey) { aiKey = it; store.openRouterApiKey = it }
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
