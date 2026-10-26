@@ -63,6 +63,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.dflixtv.app.data.BrowseFilter
 import com.dflixtv.app.player.PlayerActivity
+import com.dflixtv.app.cast.CastClient
+import androidx.compose.foundation.clickable
 import com.dflixtv.app.update.Updater
 import kotlinx.coroutines.delay
 
@@ -92,6 +94,17 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (savedInstanceState == null) handlePlayIntent(intent)
+    }
+
+    // Phones look for DFLIX TVs on the Wi-Fi while the app is open, for "Play on TV".
+    override fun onStart() {
+        super.onStart()
+        if (!isTv()) CastClient.startDiscovery(this)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isTv()) CastClient.stopDiscovery(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -170,6 +183,7 @@ private fun App() {
             }
         }
     }
+    CastOverlay()
 }
 
 @Composable
@@ -251,6 +265,7 @@ private fun MainScreen(open: (Long) -> Unit) {
                 modifier = Modifier.padding(start = gutter(), end = 12.dp),
             )
             LazyRow(
+                modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(end = gutter()),
                 horizontalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -264,6 +279,14 @@ private fun MainScreen(open: (Long) -> Unit) {
                             .focusProperties { down = content },
                     )
                 }
+            }
+            // A DFLIX TV is on the Wi-Fi: open the remote.
+            if (!isTv && CastClient.targets.isNotEmpty()) {
+                Text(
+                    "📺",
+                    fontSize = 20.sp,
+                    modifier = Modifier.padding(end = 8.dp).clickable { CastUi.openRemote() }.padding(8.dp),
+                )
             }
         }
     }

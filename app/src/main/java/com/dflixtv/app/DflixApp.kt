@@ -1,6 +1,10 @@
 package com.dflixtv.app
 
+import android.app.Activity
 import android.app.Application
+import android.os.Bundle
+import com.dflixtv.app.cast.CastServer
+import com.dflixtv.app.ui.isTv
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -16,6 +20,18 @@ class DflixApp : Application(), SingletonImageLoader.Factory {
         super.onCreate()
         instance = this
         store = Store(this)
+        // Tracks whether any screen is showing: Android only lets the TV open the player for a
+        // phone's "Play on TV" while the app is in front.
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityStarted(activity: Activity) { startedActivities++ }
+            override fun onActivityStopped(activity: Activity) { startedActivities-- }
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityResumed(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        })
+        if (isTv()) CastServer.start(this)
     }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader =
@@ -31,6 +47,9 @@ class DflixApp : Application(), SingletonImageLoader.Factory {
             private set
         lateinit var store: Store
             private set
+
+        @Volatile private var startedActivities = 0
+        val inForeground: Boolean get() = startedActivities > 0
 
         val http: OkHttpClient by lazy {
             OkHttpClient.Builder()

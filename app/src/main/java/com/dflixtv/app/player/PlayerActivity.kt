@@ -61,6 +61,8 @@ import com.dflixtv.app.subs.SubtitleQuery
 import com.dflixtv.app.subs.SubtitleRepository
 import com.dflixtv.app.subs.SubtitleResult
 import com.dflixtv.app.tv.WatchNext
+import com.dflixtv.app.cast.CastStatus
+import com.dflixtv.app.cast.NowPlaying
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
@@ -95,6 +97,7 @@ class PlayerActivity : ComponentActivity() {
     private var progressJob: Job? = null
     private var dialog: Dialog? = null
     private var networkRetries = 0
+    private var startOverrideMs: Long? = null
     private lateinit var nextCard: View
     private lateinit var nextNowButton: Button
     private lateinit var nextTitle: TextView
@@ -112,6 +115,7 @@ class PlayerActivity : ComponentActivity() {
 
         titleId = intent.getLongExtra(EXTRA_TITLE_ID, 0)
         fileId = intent.getLongExtra(EXTRA_FILE_ID, 0)
+        startOverrideMs = intent.getLongExtra(EXTRA_START_MS, -1).takeIf { it >= 0 }
 
         playerView = findViewById(R.id.player_view)
         topBar = findViewById(R.id.top_bar)
@@ -257,7 +261,8 @@ class PlayerActivity : ComponentActivity() {
 
         // Prepare paused: the video buffers and exposes its embedded tracks while we gather
         // subtitles, so playback starts once, with everything attached, instead of reloading.
-        val start = if (resume) store.position(fileId) else 0L
+        // A phone's "Play on TV" passes where the viewer was on the phone.
+        val start = startOverrideMs?.also { startOverrideMs = null } ?: if (resume) store.position(fileId) else 0L
         val loadingFileId = fileId
         player.playWhenReady = false
         player.setMediaItem(buildMediaItem(), start)
@@ -377,6 +382,7 @@ class PlayerActivity : ComponentActivity() {
             while (isActive) {
                 delay(1_000)
                 updateNextCard()
+                publishNowPlaying()
                 if (++tick % 10 == 0 && player.isPlaying) saveProgress()
             }
         }
@@ -422,6 +428,21 @@ class PlayerActivity : ComponentActivity() {
         nextCountdown = null
         nextCard.visibility = View.GONE
         playerView.requestFocus()
+    }
+
+    /** Keeps the phone remote's view of the TV current. */
+    private fun publishNowPlaying() {
+        val file = currentFile
+        NowPlaying.status = CastStatus(
+            active = true,
+            titleId = titleId,
+            fileId = fileId,
+            title = details?.title ?: watchInfo?.titleName ?: "",
+            subtitle = listOfNotNull(file?.episodeCode, file?.episodeTitle).joinToString(" · ").ifEmpty { null },
+            playing = player.isPlaying,
+            positionMs = player.currentPosition,
+            durationMs = player.duration.takeIf { it != C.TIME_UNSET } ?: 0,
+        )
     }
 
     private fun saveProgress() {
@@ -797,6 +818,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        NowPlaying.status = CastStatus()
         dialog?.dismiss()
         unregisterReceiver(pipReceiver)
         player.release()
@@ -809,6 +831,7 @@ class PlayerActivity : ComponentActivity() {
         val newTitle = intent.getLongExtra(EXTRA_TITLE_ID, titleId)
         if (newTitle != titleId) details = null
         titleId = newTitle
+        startOverrideMs = intent.getLongExtra(EXTRA_START_MS, -1).takeIf { it >= 0 }
         load(intent.getLongExtra(EXTRA_FILE_ID, fileId), resume = true)
     }
 
@@ -824,7 +847,9 @@ class PlayerActivity : ComponentActivity() {
                 PIP_PLAY_PAUSE -> if (player.isPlaying) player.pause() else player.play()
                 PIP_BACK -> player.seekBack()
                 PIP_FORWARD -> player.seekForward()
+                CONTROL_STOP -> finish()
             }
+            publishNowPlaying()
         }
     }
 
@@ -907,12 +932,25 @@ class PlayerActivity : ComponentActivity() {
         private const val PIP_BACK = 2
         private const val PIP_FORWARD = 3
         private const val EXTRA_FILE_ID = "file_id"
+        private const val EXTRA_START_MS = "start_ms"
 
-        fun start(context: Context, titleId: Long, fileId: Long) {
+        // Remote-control actions, shared with the PiP buttons.
+        const val CONTROL_TOGGLE = PIP_PLAY_PAUSE
+        const val CONTROL_BACK = PIP_BACK
+        const val CONTROL_FORWARD = PIP_FORWARD
+        const val CONTROL_STOP = 4
+
+        fun controlIntent(context: Context, action: Int): Intent =
+            Intent(ACTION_PIP_CONTROL).setPackage(context.packageName).putExtra(EXTRA_PIP_ACTION, action)
+
+        /** [startMs] overrides the saved resume position (used by "Play on TV"). */
+        fun start(context: Context, titleId: Long, fileId: Long, startMs: Long? = null) {
             context.startActivity(
                 Intent(context, PlayerActivity::class.java)
                     .putExtra(EXTRA_TITLE_ID, titleId)
                     .putExtra(EXTRA_FILE_ID, fileId)
+                    .apply { startMs?.let { putExtra(EXTRA_START_MS, it) } }
+                    .apply { if (context !is android.app.Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
             )
         }
     }

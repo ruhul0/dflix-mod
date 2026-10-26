@@ -35,18 +35,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.dflixtv.app.DflixApp
+import com.dflixtv.app.net.MiniHttpServer
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.net.Inet4Address
-import java.net.InetSocketAddress
-import java.net.ServerSocket
-import java.net.Socket
-import java.net.SocketException
-import java.net.URLDecoder
 import java.security.SecureRandom
-import kotlin.concurrent.thread
 
 /**
  * Typing API keys with a TV remote is painful, so the TV briefly serves a one-page form on the
@@ -55,78 +48,27 @@ import kotlin.concurrent.thread
  */
 private class KeyEntryServer(private val onSaved: (List<String>) -> Unit) {
     val token: String = ByteArray(9).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
-    private val socket = ServerSocket().apply {
-        reuseAddress = true
-        bind(InetSocketAddress(0))
-    }
-    val port: Int get() = socket.localPort
+    private val http = MiniHttpServer("key-entry", handler = ::handle)
+    val port: Int get() = http.port
 
-    fun start() = thread(name = "key-entry", isDaemon = true) {
-        while (!socket.isClosed) {
-            val client = try {
-                socket.accept()
-            } catch (_: SocketException) {
-                break
-            }
-            runCatching { client.use(::handle) }
+    fun start() = http.start()
+
+    fun stop() = http.stop()
+
+    private fun handle(request: MiniHttpServer.Request): MiniHttpServer.Response {
+        if (request.query["t"] != token) return MiniHttpServer.Response(403, page("This link has expired. Open it again from the TV."))
+        if (request.method != "POST") return MiniHttpServer.Response(200, page(form = true))
+        val store = DflixApp.store
+        val saved = buildList {
+            request.form["openrouter"]?.takeIf { it.isNotBlank() }?.let { store.openRouterApiKey = it; add("OpenRouter") }
+            request.form["opensubtitles"]?.takeIf { it.isNotBlank() }?.let { store.openSubtitlesApiKey = it; add("OpenSubtitles.com") }
+            request.form["subdl"]?.takeIf { it.isNotBlank() }?.let { store.subdlApiKey = it; add("SubDL") }
         }
-    }
-
-    fun stop() = runCatching { socket.close() }
-
-    private fun handle(client: Socket) {
-        client.soTimeout = 10_000
-        val reader = BufferedReader(InputStreamReader(client.getInputStream(), Charsets.UTF_8))
-        val requestLine = reader.readLine() ?: return
-        val (method, target) = requestLine.split(" ").let { (it.getOrNull(0) ?: "") to (it.getOrNull(1) ?: "/") }
-        var contentLength = 0
-        while (true) {
-            val line = reader.readLine() ?: break
-            if (line.isEmpty()) break
-            if (line.startsWith("Content-Length:", ignoreCase = true)) contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
-        }
-        val query = parseForm(target.substringAfter('?', ""))
-        if (query["t"] != token) return respond(client, 403, page("This link has expired. Open it again from the TV."))
-
-        if (method == "POST") {
-            val body = CharArray(contentLength.coerceAtMost(16_384)).let { buf ->
-                var read = 0
-                while (read < buf.size) {
-                    val n = reader.read(buf, read, buf.size - read)
-                    if (n < 0) break
-                    read += n
-                }
-                String(buf, 0, read)
-            }
-            val form = parseForm(body)
-            val store = DflixApp.store
-            val saved = buildList {
-                form["openrouter"]?.takeIf { it.isNotBlank() }?.let { store.openRouterApiKey = it; add("OpenRouter") }
-                form["opensubtitles"]?.takeIf { it.isNotBlank() }?.let { store.openSubtitlesApiKey = it; add("OpenSubtitles.com") }
-                form["subdl"]?.takeIf { it.isNotBlank() }?.let { store.subdlApiKey = it; add("SubDL") }
-            }
-            respond(client, 200, page(if (saved.isEmpty()) "Nothing to save: all fields were empty." else "Saved on your TV: ${saved.joinToString(", ")}. You can close this page."))
-            if (saved.isNotEmpty()) onSaved(saved)
-            return
-        }
-        respond(client, 200, page(form = true))
-    }
-
-    private fun parseForm(text: String): Map<String, String> =
-        text.split('&').filter { '=' in it }.associate { pair ->
-            val (k, v) = pair.split('=', limit = 2)
-            URLDecoder.decode(k, "UTF-8") to URLDecoder.decode(v, "UTF-8").trim()
-        }
-
-    private fun respond(client: Socket, status: Int, html: String) {
-        val bytes = html.toByteArray(Charsets.UTF_8)
-        val head = "HTTP/1.1 $status ${if (status == 200) "OK" else "Forbidden"}\r\n" +
-            "Content-Type: text/html; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
-        client.getOutputStream().apply {
-            write(head.toByteArray())
-            write(bytes)
-            flush()
-        }
+        if (saved.isNotEmpty()) onSaved(saved)
+        return MiniHttpServer.Response(
+            200,
+            page(if (saved.isEmpty()) "Nothing to save: all fields were empty." else "Saved on your TV: ${saved.joinToString(", ")}. You can close this page."),
+        )
     }
 
     private fun page(message: String? = null, form: Boolean = false): String {

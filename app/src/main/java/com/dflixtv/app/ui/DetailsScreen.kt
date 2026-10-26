@@ -58,6 +58,7 @@ import com.dflixtv.app.data.HomeRow
 import com.dflixtv.app.data.MediaFile
 import com.dflixtv.app.data.TitleDetails
 import com.dflixtv.app.player.PlayerActivity
+import com.dflixtv.app.cast.CastClient
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -83,7 +84,6 @@ class DetailsViewModel(private val titleId: Long) : ViewModel() {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
     val vm: DetailsViewModel = viewModel(key = "details-$titleId") { DetailsViewModel(titleId) }
@@ -128,6 +128,10 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
     }
 
     val play: (MediaFile) -> Unit = { PlayerActivity.start(context, titleId, it.id) }
+    // "Play on TV" starts where this phone left off.
+    val castTo: ((MediaFile) -> Unit)? = if (!isTv && CastClient.targets.isNotEmpty()) {
+        { file -> CastUi.request(titleId, file.id, store.position(file.id)) }
+    } else null
     val toggleList = { inList = store.toggleMyList(details.toSummary()) }
     val episodes = seasons[seasonKeys.getOrNull(seasonIndex)].orEmpty()
 
@@ -175,6 +179,9 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
                         DetailsInfo(details, isTv = false)
                         playFile?.let { file ->
                             NetflixButton(playLabel(resumeEntry, file), onClick = { play(file) }, primary = true, icon = "▶", modifier = Modifier.fillMaxWidth())
+                            castTo?.let { cast ->
+                                NetflixButton("Play on TV", onClick = { cast(file) }, icon = "📺", modifier = Modifier.fillMaxWidth())
+                            }
                         }
                         if (resumeEntry != null && playFile != null) {
                             ProgressBar(resumeEntry.progress, Modifier.fillMaxWidth())
@@ -221,40 +228,19 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
                 }
             } else {
                 items(episodes, key = { it.id }) { ep ->
-                    EpisodeRow(ep, progress = if (ep.id == resumeEntry?.fileId) resumeEntry.progress else null) { play(ep) }
+                    EpisodeRow(
+                        ep,
+                        progress = if (ep.id == resumeEntry?.fileId) resumeEntry.progress else null,
+                        onCast = castTo?.let { cast -> { cast(ep) } },
+                    ) { play(ep) }
                 }
             }
         }
 
-        // TV keeps Netflix's horizontal rows; phones get a 3-column poster grid.
+        // Horizontal rows on phone and TV alike, like Netflix.
         vm.related.forEach { row ->
             item(key = "related-${row.label}") {
-                if (isTv) {
-                    TitleRow(row.label, row.titles, onClick = { open(it.id) })
-                } else {
-                    Column(Modifier.padding(top = 20.dp)) {
-                        SectionLabel(row.label)
-                        FlowRow(
-                            Modifier.padding(horizontal = gutter(), vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            maxItemsInEachRow = 3,
-                        ) {
-                            row.titles.take(12).forEach { t ->
-                                Box(Modifier.weight(1f)) {
-                                    FocusCard(onClick = { open(t.id) }, memoryKey = "title/${t.id}", modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)) {
-                                        AsyncImage(
-                                            model = t.posterUrl,
-                                            contentDescription = t.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                TitleRow(row.label, row.titles, onClick = { open(it.id) })
             }
         }
     }
@@ -346,7 +332,7 @@ private fun IconAction(icon: String, label: String, onClick: () -> Unit) {
 
 /** Phone episode row: thumbnail with progress, title, and synopsis underneath. */
 @Composable
-private fun EpisodeRow(file: MediaFile, progress: Float?, onClick: () -> Unit) {
+private fun EpisodeRow(file: MediaFile, progress: Float?, onCast: (() -> Unit)? = null, onClick: () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -374,7 +360,7 @@ private fun EpisodeRow(file: MediaFile, progress: Float?, onClick: () -> Unit) {
                 )
                 progress?.let { ProgressBar(it, Modifier.fillMaxWidth().align(Alignment.BottomStart)) }
             }
-            Column(Modifier.padding(start = 12.dp)) {
+            Column(Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(
                     listOfNotNull(file.episode?.let { "$it." }, file.episodeTitle).joinToString(" "),
                     color = Color.White,
@@ -387,6 +373,13 @@ private fun EpisodeRow(file: MediaFile, progress: Float?, onClick: () -> Unit) {
                     listOfNotNull(file.quality, file.size?.let(::formatSize)).joinToString(" · "),
                     color = Dim,
                     fontSize = 12.sp,
+                )
+            }
+            onCast?.let {
+                Text(
+                    "📺",
+                    fontSize = 20.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = it).padding(10.dp),
                 )
             }
         }
