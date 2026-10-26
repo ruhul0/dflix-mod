@@ -1,7 +1,9 @@
 package com.dflixtv.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -16,6 +18,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -107,7 +111,19 @@ fun BrowseScreen(key: String, initial: BrowseFilter, open: (Long) -> Unit) {
         }
         if (vm.items.isEmpty()) {
             item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
-                CenterMessage(if (vm.loading) "Loading…" else vm.error ?: "Nothing here")
+                val error = vm.error
+                when {
+                    vm.loading -> CenterMessage("Loading…")
+                    error != null -> RetryMessage("Could not load: $error", vm::loadMore)
+                    else -> CenterMessage("Nothing here")
+                }
+            }
+        } else if (vm.error != null && !vm.loading) {
+            // A later page failed; scrolling won't trigger another attempt, so offer one.
+            item(key = "retry", span = { GridItemSpan(maxLineSpan) }) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    NetflixButton("Load more", onClick = vm::loadMore)
+                }
             }
         }
         itemsIndexed(vm.items, key = { _, t -> t.id }) { index, title ->

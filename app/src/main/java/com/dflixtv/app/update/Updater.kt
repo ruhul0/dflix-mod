@@ -75,11 +75,15 @@ object Updater {
         if (activity.isFinishing) return
         AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Update available: ${update.release.tag_name}")
-            .setMessage(update.release.body?.take(800)?.ifBlank { null } ?: "A new version of DFLIX TV is ready.")
+            .setMessage(update.release.body?.let(::unwrap)?.take(800)?.ifBlank { null } ?: "A new version of DFLIX TV is ready.")
             .setPositiveButton("Install") { _, _ -> download(activity, update) }
             .setNegativeButton("Later", null)
             .show()
     }
+
+    /** Release notes come from commit messages wrapped at 72 columns; rejoin lines within paragraphs. */
+    private fun unwrap(text: String): String =
+        text.replace("\r\n", "\n").split(Regex("\n{2,}")).joinToString("\n\n") { it.trim().replace(Regex("\\s*\n\\s*"), " ") }
 
     private fun download(activity: Activity, update: Update) {
         val progress = AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)

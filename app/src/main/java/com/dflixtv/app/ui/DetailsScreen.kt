@@ -70,6 +70,11 @@ class DetailsViewModel(private val titleId: Long) : ViewModel() {
         private set
 
     init {
+        load()
+    }
+
+    fun load() {
+        error = null
         viewModelScope.launch {
             runCatching { DflixApi.titlePage(titleId) }
                 .onSuccess { (d, rows) -> details = d; related = rows }
@@ -84,7 +89,8 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
     val vm: DetailsViewModel = viewModel(key = "details-$titleId") { DetailsViewModel(titleId) }
     val details = vm.details
     if (details == null) {
-        CenterMessage(vm.error?.let { "Could not load title: $it" } ?: "Loading…")
+        val error = vm.error
+        if (error != null) RetryMessage("Could not load title: $error", vm::load) else CenterMessage("Loading…")
         return
     }
     val context = LocalContext.current
@@ -111,8 +117,10 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
 
     val playFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
+    val focusMemory = LocalFocusMemory.current
     LaunchedEffect(Unit) {
-        if (!isTv) return@LaunchedEffect
+        // Returning from another title, the card we left from takes focus instead.
+        if (!isTv || focusMemory.restore != null) return@LaunchedEffect
         runCatching { playFocus.requestFocus() }
         // Focusing Play scrolls it into view; keep the title and synopsis on screen instead.
         delay(60)
@@ -234,7 +242,7 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
                         ) {
                             row.titles.take(12).forEach { t ->
                                 Box(Modifier.weight(1f)) {
-                                    FocusCard(onClick = { open(t.id) }, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)) {
+                                    FocusCard(onClick = { open(t.id) }, memoryKey = "title/${t.id}", modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)) {
                                         AsyncImage(
                                             model = t.posterUrl,
                                             contentDescription = t.title,

@@ -61,6 +61,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.dflixtv.app.data.BrowseFilter
 import com.dflixtv.app.update.Updater
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,18 +113,27 @@ private enum class Tab(val label: String) {
 private fun App() {
     val backStack = remember { mutableStateListOf<Screen>(Screen.Main) }
     val holder = rememberSaveableStateHolder()
-    val open: (Long) -> Unit = { backStack.add(Screen.Details(it)) }
+    val focusMemory = remember { FocusMemory() }
+    val open: (Long) -> Unit = {
+        focusMemory.push()
+        backStack.add(Screen.Details(it))
+    }
     val context = LocalContext.current
 
     LaunchedEffect(Unit) { Updater.checkOnLaunch(context) }
 
-    BackHandler(enabled = backStack.size > 1) { backStack.removeAt(backStack.lastIndex) }
+    BackHandler(enabled = backStack.size > 1) {
+        focusMemory.pop()
+        backStack.removeAt(backStack.lastIndex)
+    }
 
     val current = backStack.last()
-    holder.SaveableStateProvider(current.toString() + backStack.size) {
-        when (current) {
-            Screen.Main -> MainScreen(open)
-            is Screen.Details -> DetailsScreen(current.titleId, open)
+    CompositionLocalProvider(LocalFocusMemory provides focusMemory) {
+        holder.SaveableStateProvider(current.toString() + backStack.size) {
+            when (current) {
+                Screen.Main -> MainScreen(open)
+                is Screen.Details -> DetailsScreen(current.titleId, open)
+            }
         }
     }
 }
@@ -135,7 +145,17 @@ private fun MainScreen(open: (Long) -> Unit) {
     val firstTab = remember { FocusRequester() }
     val content = remember { FocusRequester() }
     val isTv = LocalIsTv.current
-    LaunchedEffect(Unit) { if (isTv) runCatching { firstTab.requestFocus() } }
+    val focusMemory = LocalFocusMemory.current
+    LaunchedEffect(Unit) {
+        if (!isTv) return@LaunchedEffect
+        // Coming back from a title, the card we left from takes focus; fall back to the menu
+        // if that card is gone (e.g. removed from My List).
+        if (focusMemory.restore != null) delay(400)
+        if (focusMemory.restore != null || focusMemory.last == null) {
+            focusMemory.restore = null
+            runCatching { firstTab.requestFocus() }
+        }
+    }
 
     val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val headerHeight = if (isTv) 72.dp else 52.dp
@@ -145,6 +165,12 @@ private fun MainScreen(open: (Long) -> Unit) {
     // Like Netflix, the header is see-through over the billboard and turns solid once you scroll.
     val scrolled by remember { derivedStateOf { homeList.firstVisibleItemIndex > 0 || homeList.firstVisibleItemScrollOffset > 300 } }
     val solidHeader = tab != Tab.Home || scrolled
+
+    // Like Netflix, Back from another tab returns to Home before leaving the app.
+    BackHandler(enabled = selected != 0) {
+        selected = 0
+        if (isTv) runCatching { firstTab.requestFocus() }
+    }
 
     Box(Modifier.fillMaxSize()) {
         // Content draws under the header; Home's billboard runs edge to edge behind it.

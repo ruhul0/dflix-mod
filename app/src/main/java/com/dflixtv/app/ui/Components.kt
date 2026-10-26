@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -70,6 +73,26 @@ val LocalIsTv = staticCompositionLocalOf { false }
 fun Context.isTv(): Boolean =
     (getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
 
+/**
+ * Remembers the focused control on each screen so that Back puts the D-pad focus on the card
+ * the viewer left from, instead of jumping to the top menu.
+ */
+class FocusMemory {
+    /** Key of the most recently focused control. */
+    var last: String? = null
+    /** Key to refocus after returning to a screen; consumed by the matching control. */
+    var restore: String? = null
+    private val saved = ArrayDeque<String?>()
+
+    fun push() = saved.addLast(last)
+
+    fun pop() {
+        restore = saved.removeLastOrNull()
+    }
+}
+
+val LocalFocusMemory = staticCompositionLocalOf { FocusMemory() }
+
 /** Horizontal page gutter: roomy on TV, tighter on phones. */
 @Composable
 fun gutter(): Dp = if (LocalIsTv.current) 56.dp else 12.dp
@@ -77,17 +100,36 @@ fun gutter(): Dp = if (LocalIsTv.current) 56.dp else 12.dp
 /**
  * Focus highlight for D-pad / arrow-key navigation: scales up and draws a white ring.
  * Must come before the clickable/focusable modifier it should observe.
+ * A [memoryKey] lets the control take focus back when the viewer returns to its screen.
  */
-fun Modifier.focusRing(shape: Shape = RoundedCornerShape(4.dp), onFocused: () -> Unit = {}): Modifier = composed {
+fun Modifier.focusRing(
+    shape: Shape = RoundedCornerShape(4.dp),
+    onFocused: () -> Unit = {},
+    memoryKey: String? = null,
+): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.08f else 1f, label = "focusScale")
+    val memory = LocalFocusMemory.current
+    val requester = remember { FocusRequester() }
+    if (memoryKey != null && LocalIsTv.current) {
+        LaunchedEffect(memoryKey) {
+            if (memory.restore == memoryKey) {
+                memory.restore = null
+                runCatching { requester.requestFocus() }
+            }
+        }
+    }
     this
         .graphicsLayer { scaleX = scale; scaleY = scale }
         .border(3.dp, if (focused) Color.White else Color.Transparent, shape)
         .onFocusChanged {
             focused = it.isFocused
-            if (it.isFocused) onFocused()
+            if (it.isFocused) {
+                if (memoryKey != null) memory.last = memoryKey
+                onFocused()
+            }
         }
+        .focusRequester(requester)
 }
 
 /** A clickable surface that works with touch, mouse, D-pad and keyboard (Enter). */
@@ -97,11 +139,12 @@ fun FocusCard(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(4.dp),
     onFocused: () -> Unit = {},
+    memoryKey: String? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Box(
         modifier
-            .focusRing(shape, onFocused)
+            .focusRing(shape, onFocused, memoryKey)
             .clip(shape)
             .background(CardColor)
             .clickable(onClick = onClick),
@@ -117,11 +160,12 @@ fun NetflixButton(
     modifier: Modifier = Modifier,
     primary: Boolean = false,
     icon: String? = null,
+    memoryKey: String? = null,
 ) {
     val shape = RoundedCornerShape(4.dp)
     Row(
         modifier
-            .focusRing(shape)
+            .focusRing(shape, memoryKey = memoryKey)
             .clip(shape)
             .background(if (primary) Color.White else SecondaryButton)
             .clickable(onClick = onClick)
@@ -196,10 +240,12 @@ fun PosterCard(
     modifier: Modifier = Modifier,
     width: Dp = if (LocalIsTv.current) 150.dp else 104.dp,
     onFocused: () -> Unit = {},
+    memoryKey: String = "title/${title.id}",
 ) {
     FocusCard(
         onClick = onClick,
         onFocused = onFocused,
+        memoryKey = memoryKey,
         modifier = modifier.width(width).aspectRatio(2f / 3f),
     ) {
         AsyncImage(
@@ -222,8 +268,9 @@ fun LandscapeCard(
     modifier: Modifier = Modifier,
     width: Dp = 280.dp,
     onFocused: () -> Unit = {},
+    memoryKey: String = "title/${title.id}",
 ) {
-    FocusCard(onClick = onClick, onFocused = onFocused, modifier = modifier.width(width).aspectRatio(16f / 9f)) {
+    FocusCard(onClick = onClick, onFocused = onFocused, memoryKey = memoryKey, modifier = modifier.width(width).aspectRatio(16f / 9f)) {
         AsyncImage(
             model = title.backdropUrl ?: title.posterUrl,
             contentDescription = title.title,
@@ -258,8 +305,10 @@ fun TitleRow(
             horizontalArrangement = Arrangement.spacedBy(if (LocalIsTv.current) 12.dp else 8.dp),
         ) {
             items(titles, key = { it.id }) { t ->
-                if (landscape) LandscapeCard(t, onClick = { onClick(t) }, onFocused = { onFocused(t) })
-                else PosterCard(t, onClick = { onClick(t) }, onFocused = { onFocused(t) })
+                // The same title can sit in several rows, so the row label is part of the focus key.
+                val key = "$label/${t.id}"
+                if (landscape) LandscapeCard(t, onClick = { onClick(t) }, onFocused = { onFocused(t) }, memoryKey = key)
+                else PosterCard(t, onClick = { onClick(t) }, onFocused = { onFocused(t) }, memoryKey = key)
             }
         }
     }
@@ -294,7 +343,7 @@ fun Top10Row(
                         ),
                         modifier = Modifier.offset(x = 12.dp, y = if (tv) 40.dp else 28.dp),
                     )
-                    PosterCard(t, onClick = { onClick(t) }, onFocused = { onFocused(t) }, width = posterWidth)
+                    PosterCard(t, onClick = { onClick(t) }, onFocused = { onFocused(t) }, width = posterWidth, memoryKey = "$label/${t.id}")
                 }
             }
         }
@@ -355,6 +404,22 @@ fun Backdrop(url: String?, modifier: Modifier = Modifier, fadeLeft: Boolean = tr
 fun CenterMessage(text: String) {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Text(text, style = MaterialTheme.typography.bodyLarge, color = Dim)
+    }
+}
+
+/** Error message with a "Try again" button that takes focus on TV. */
+@Composable
+fun RetryMessage(text: String, onRetry: () -> Unit) {
+    val requester = remember { FocusRequester() }
+    val isTv = LocalIsTv.current
+    LaunchedEffect(Unit) { if (isTv) runCatching { requester.requestFocus() } }
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+    ) {
+        Text(text, style = MaterialTheme.typography.bodyLarge, color = Dim)
+        NetflixButton("Try again", onClick = onRetry, primary = true, modifier = Modifier.focusRequester(requester))
     }
 }
 

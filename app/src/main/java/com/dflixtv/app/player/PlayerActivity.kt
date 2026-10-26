@@ -1,5 +1,6 @@
 package com.dflixtv.app.player
 
+import android.app.ActivityManager
 import android.app.AlertDialog
 import android.app.Dialog
 import android.app.PendingIntent
@@ -89,6 +90,7 @@ class PlayerActivity : ComponentActivity() {
     private var subtitleOffsetMs = 0L
     private var progressJob: Job? = null
     private var dialog: Dialog? = null
+    private var networkRetries = 0
 
     private val currentFile: MediaFile? get() = details?.files?.firstOrNull { it.id == fileId }
 
@@ -154,9 +156,11 @@ class PlayerActivity : ComponentActivity() {
             .setEnableDecoderFallback(true)
         val http = OkHttpDataSource.Factory(DflixApp.http)
         val dataSource = DefaultDataSource.Factory(this, http)
+        // The buffer lives on the Java heap, which is small on cheap TV sticks: use a quarter of it.
+        val heapMb = (getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(30_000, 120_000, 2_500, 5_000)
-            .setTargetBufferBytes(128 * 1024 * 1024)
+            .setTargetBufferBytes((heapMb / 4).coerceIn(32, 128) * 1024 * 1024)
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
         return ExoPlayer.Builder(this, renderers)
@@ -190,11 +194,26 @@ class PlayerActivity : ComponentActivity() {
                 .build()
         }
 
-        override fun onIsPlayingChanged(isPlaying: Boolean) = updatePipParams()
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying) networkRetries = 0
+            updatePipParams()
+        }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) = updatePipParams()
 
         override fun onPlayerError(error: PlaybackException) {
+            // Wi-Fi hiccups are common on TVs: retry network errors from the same position a few times.
+            val network = error.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED until PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED
+            if (network && networkRetries < MAX_NETWORK_RETRIES) {
+                networkRetries++
+                loading.visibility = View.VISIBLE
+                lifecycleScope.launch {
+                    delay(3_000L * networkRetries)
+                    player.prepare()
+                    loading.visibility = View.GONE
+                }
+                return
+            }
             toast("Playback error: ${error.errorCodeName}")
         }
     }
@@ -340,6 +359,24 @@ class PlayerActivity : ComponentActivity() {
         val position = player.currentPosition
         if (position < 15_000) return
         val file = currentFile
+        val next = nextFileId()
+        if (position > duration * 0.95 && next != null) {
+            // Finished an episode: Continue Watching offers the next one, like Netflix.
+            val nextFile = details?.files?.firstOrNull { it.id == next }
+            store.savePosition(
+                ContinueEntry(
+                    titleId = titleId,
+                    fileId = next,
+                    title = details?.title ?: watchInfo?.titleName ?: "",
+                    subtitle = listOfNotNull(nextFile?.episodeCode, nextFile?.episodeTitle).joinToString(" · ").ifEmpty { null },
+                    imageUrl = nextFile?.stillUrl ?: details?.backdropUrl ?: watchInfo?.poster?.let(DflixApi::absolute),
+                    positionMs = 0,
+                    durationMs = 0,
+                )
+            )
+            store.clearPosition(fileId)
+            return
+        }
         store.savePosition(
             ContinueEntry(
                 titleId = titleId,
@@ -658,6 +695,7 @@ class PlayerActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_TITLE_ID = "title_id"
         private const val AUTO_SUBTITLE_WAIT_MS = 8_000L
+        private const val MAX_NETWORK_RETRIES = 3
         private const val ACTION_PIP_CONTROL = "com.dflixtv.app.PIP_CONTROL"
         private const val EXTRA_PIP_ACTION = "pip_action"
         private const val PIP_PLAY_PAUSE = 1

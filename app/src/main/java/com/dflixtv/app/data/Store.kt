@@ -46,6 +46,8 @@ class Store(context: Context) {
 
     fun position(fileId: Long): Long = prefs.getLong("pos_$fileId", 0L)
 
+    fun clearPosition(fileId: Long) = prefs.edit { remove("pos_$fileId") }
+
     fun savePosition(entry: ContinueEntry) {
         val list = continueWatching().filterNot { it.titleId == entry.titleId }.toMutableList()
         val finished = entry.durationMs > 0 && entry.positionMs > entry.durationMs * 0.95

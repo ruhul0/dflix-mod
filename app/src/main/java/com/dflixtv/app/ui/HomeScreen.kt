@@ -97,7 +97,8 @@ fun HomeScreen(open: (Long) -> Unit, topInset: Dp, listState: LazyListState) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshLocal() }
 
     if (vm.rows.isEmpty()) {
-        CenterMessage(vm.error?.let { "Could not reach dflix.live: $it" } ?: "Loading…")
+        val error = vm.error
+        if (error != null) RetryMessage("Could not reach dflix.live: $error", vm::load) else CenterMessage("Loading…")
         return
     }
 
@@ -171,12 +172,19 @@ private fun TvBillboard(title: TitleSummary, topInset: Dp, onInfo: () -> Unit, o
                 overflow = TextOverflow.Ellipsis,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 6.dp)) {
-                NetflixButton("Play", onClick = { scope.launch { playTitle(context, title.id) } }, primary = true, icon = "▶")
-                NetflixButton("More info", onClick = onInfo, icon = "ⓘ")
+                NetflixButton(
+                    "Play",
+                    onClick = { scope.launch { playTitle(context, title.id) } },
+                    primary = true,
+                    icon = "▶",
+                    memoryKey = "hero/play",
+                )
+                NetflixButton("More info", onClick = onInfo, icon = "ⓘ", memoryKey = "hero/info")
                 NetflixButton(
                     "My List",
                     onClick = { inList = DflixApp.store.toggleMyList(title); onListChanged() },
                     icon = if (inList) "✓" else "+",
+                    memoryKey = "hero/list",
                 )
             }
         }
