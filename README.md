@@ -1,20 +1,31 @@
 # DFLIX TV
 
-An Android TV client for [dflix.live](https://dflix.live): browse, search and stream the library, and find subtitles online.
+A Netflix-style Android TV and phone client for [dflix.live](https://dflix.live): browse, search and stream the library, with subtitles found online and the phone working as a remote.
 
 ## Features
 
-- Home rows (Trending, Recently Added, per-language rows), Movies / TV Shows / Anime grids with sort and language filters, and search.
-- A details page with seasons and episodes, resume, and "More like this".
-- Direct playback of the original MKV/MP4 files with ExoPlayer. The FFmpeg audio decoder plays AC3/E-AC3/DTS/TrueHD on TVs without passthrough.
-- Subtitles:
-  - Subtitle tracks inside the file, plus subtitles that dflix provides.
-  - Online search with **Find subtitles** in the player. OpenSubtitles.org works without a key and matches by file hash first, so results fit the exact release. Optional keys add OpenSubtitles.com and SubDL (Settings).
-  - Downloaded subtitles are converted to UTF-8, saved per file and loaded automatically next time.
-  - **Subtitle sync** shifts downloaded subtitles earlier or later.
-- Continue Watching, and autoplay of the next episode.
-- Remote, arrow keys and keyboard: arrows and Enter navigate, Esc goes back. In the player, Space plays/pauses and Left/Right seek 10 s.
-- Self-update: on launch the app checks this repo's latest GitHub release and offers to install it.
+**Browsing**
+- Netflix-style home: billboard, Continue Watching, My List, Top 10, Top Picks for You and dflix's own rows. The last home screen shows instantly from cache while fresh rows load.
+- TV Shows / Movies / Anime grids with sort and language filters; search with recent searches, voice search (🎤 or the remote's Search key) and **✨ Ask AI** ("space movies like Interstellar").
+- Title pages with seasons and episodes, resume, trailers (YouTube), and a "More like this" carousel.
+- A red **NEW EPISODES** tag on followed shows that gained episodes (checked daily).
+- Remote, arrow keys and keyboard throughout; Back returns focus to the card you came from.
+
+**Playback**
+- Plays the original MKV/MP4 files with ExoPlayer; the FFmpeg decoder handles AC3/E-AC3/DTS/TrueHD on TVs without passthrough. Network drops are retried from the same position.
+- **Audio & Subtitles** panel: audio tracks ([Original], Dolby/DTS, 5.1), English subtitle tracks, online search, subtitle timing, speed, sleep timer and text size.
+- English subtitles load automatically: embedded tracks first, otherwise the best online match (OpenSubtitles.org without a key; optional OpenSubtitles.com and SubDL keys). Matches are checked against the video's length, and advert lines are removed.
+- "Next episode" card with a countdown that skips the credits; picture-in-picture; on phones, double-tap to skip and swipe for brightness/volume.
+
+**TV and phone together**
+- **Play on TV**: the phone app finds DFLIX TVs on the same Wi-Fi, sends a title or episode at the phone's position, and becomes a remote (pause, ±10 s, stop). No setup or adb.
+- Continue Watching and My List sync between phone and TV on the same Wi-Fi; the newest change wins.
+- Shows you're watching appear in the Google TV / Android TV home screen's Play Next row.
+- **Enter keys with your phone**: Settings shows a QR code; paste API keys on the phone instead of typing them with the remote.
+
+**AI (optional)** — Top Picks for You and Ask AI use free OpenRouter models. Add a free key in Settings (or with your phone). The AI only names titles; each is looked up in the library, so every pick is playable.
+
+**Updates** — the sideload build checks this repo's latest GitHub release on launch and offers to install it.
 
 ## Install on a TV (no adb)
 
@@ -54,7 +65,21 @@ Keep `keystore/` backed up and out of git. If the key is lost, installed apps ca
 ```sh
 ./gradlew assembleSideloadRelease  # needs keystore/keystore.properties
 adb install -r app/build/outputs/apk/sideload/release/app-sideload-release.apk
+./gradlew testSideloadDebugUnitTest  # parsing, subtitle and sync tests (release.sh runs them too)
 ```
+
+Optional: `openrouter.key=…` in `local.properties` (git-ignored) builds in an OpenRouter key for AI suggestions. Without it, each viewer adds their own in Settings. The released APK is public, so a built-in key can be extracted by anyone.
+
+## Phone ↔ TV on the local network
+
+The TV app advertises `_dflixtv._tcp` over mDNS (port 8611, or any free port) and serves plain HTTP on the LAN:
+
+| Request | Purpose |
+|---|---|
+| `GET /status` | What's playing, for the phone's remote |
+| `POST /play` `title`, `file`, `pos` | Start a file at a position (only while DFLIX is open on the TV) |
+| `POST /control` `action=toggle\|back\|forward\|stop` | Remote buttons |
+| `POST /sync` `data=<json>` | Merge Continue Watching and My List; returns the merged state |
 
 ## How it talks to dflix.live
 
