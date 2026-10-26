@@ -96,7 +96,26 @@ object Updater {
                 val file = File(dir, "dflixtv-${update.versionCode}.apk")
                 DflixApp.http.newCall(Request.Builder().url(update.apk.browser_download_url).build()).execute().use { response ->
                     if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-                    file.outputStream().use { response.body.byteStream().copyTo(it) }
+                    val total = response.body.contentLength().takeIf { it > 0 } ?: update.apk.size
+                    var lastPercent = -1
+                    file.outputStream().use { out ->
+                        response.body.byteStream().use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            var done = 0L
+                            while (true) {
+                                val n = input.read(buffer)
+                                if (n < 0) break
+                                out.write(buffer, 0, n)
+                                done += n
+                                val percent = if (total > 0) (done * 100 / total).toInt() else -1
+                                if (percent != lastPercent) {
+                                    lastPercent = percent
+                                    val text = if (percent >= 0) "Downloading update… $percent%" else "Downloading update… ${done / (1 shl 20)} MB"
+                                    activity.runOnUiThread { progress.setMessage(text) }
+                                }
+                            }
+                        }
+                    }
                 }
                 file
             }

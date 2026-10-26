@@ -103,4 +103,5 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.okhttp)
     implementation(libs.androidx.tvprovider)
+    implementation(libs.zxing.core)
 }

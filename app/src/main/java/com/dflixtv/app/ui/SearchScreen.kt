@@ -17,7 +17,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import android.content.Intent
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -124,11 +129,33 @@ fun SearchTextField(
     )
 }
 
+/** Set when the remote's Search key is pressed; the Search screen consumes it by starting voice input. */
+object VoiceSearchRequests {
+    var pending by mutableStateOf(false)
+}
+
+private val speechIntent: Intent
+    get() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        .putExtra(RecognizerIntent.EXTRA_PROMPT, "Say a title, or what you feel like watching")
+
 @Composable
 fun SearchScreen(open: (Long) -> Unit) {
     val vm: SearchViewModel = viewModel()
     val focusManager = LocalFocusManager.current
     val isTv = LocalIsTv.current
+    val context = LocalContext.current
+    val voiceAvailable = remember { speechIntent.resolveActivity(context.packageManager) != null }
+    val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let(vm::onQuery)
+    }
+    // The remote's Search key lands here; each press is consumed once.
+    LaunchedEffect(VoiceSearchRequests.pending) {
+        if (VoiceSearchRequests.pending) {
+            VoiceSearchRequests.pending = false
+            if (voiceAvailable) runCatching { voice.launch(speechIntent) }
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.padding(horizontal = gutter(), vertical = 12.dp),
@@ -146,6 +173,9 @@ fun SearchScreen(open: (Long) -> Unit) {
                 },
                 modifier = if (isTv) Modifier.fillMaxWidth(0.6f) else Modifier.weight(1f),
             )
+            if (voiceAvailable) {
+                NetflixButton("Voice", onClick = { runCatching { voice.launch(speechIntent) } }, icon = "🎤")
+            }
             if (AiSuggest.isAvailable && vm.query.isNotBlank()) {
                 NetflixButton("Ask AI", onClick = vm::askAi, icon = "✨")
             }

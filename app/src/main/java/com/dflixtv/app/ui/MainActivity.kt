@@ -121,6 +121,11 @@ class MainActivity : ComponentActivity() {
 
     // Keyboard support: Esc works like the remote's Back button. Arrows and Enter already map to D-pad.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // The remote's Search key opens Search and starts voice input.
+        if (event.keyCode == KeyEvent.KEYCODE_SEARCH) {
+            if (event.action == KeyEvent.ACTION_UP) VoiceSearchRequests.pending = true
+            return true
+        }
         if (event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
             if (event.action == KeyEvent.ACTION_UP) onBackPressedDispatcher.onBackPressed()
             return true
@@ -194,6 +199,10 @@ private fun MainScreen(open: (Long) -> Unit) {
     // Like Netflix, the header is see-through over the billboard and turns solid once you scroll.
     val scrolled by remember { derivedStateOf { homeList.firstVisibleItemIndex > 0 || homeList.firstVisibleItemScrollOffset > 300 } }
     val solidHeader = tab != Tab.Home || scrolled
+
+    LaunchedEffect(VoiceSearchRequests.pending) {
+        if (VoiceSearchRequests.pending) selected = Tab.Search.ordinal
+    }
 
     // Like Netflix, Back from another tab returns to Home before leaving the app.
     BackHandler(enabled = selected != 0) {

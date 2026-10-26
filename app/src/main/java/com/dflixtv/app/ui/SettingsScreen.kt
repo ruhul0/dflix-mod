@@ -43,6 +43,16 @@ fun SettingsScreen() {
     var osKey by remember { mutableStateOf(store.openSubtitlesApiKey) }
     var subdlKey by remember { mutableStateOf(store.subdlApiKey) }
     var aiKey by remember { mutableStateOf(store.openRouterApiKey) }
+    var phoneEntry by remember { mutableStateOf(false) }
+    if (phoneEntry) {
+        PhoneKeyEntryDialog(onDismiss = {
+            phoneEntry = false
+            // Keys may have arrived from the phone.
+            aiKey = store.openRouterApiKey
+            osKey = store.openSubtitlesApiKey
+            subdlKey = store.subdlApiKey
+        })
+    }
     var autoplay by remember { mutableStateOf(store.autoPlayNext) }
     var autoSubs by remember { mutableStateOf(store.autoSubtitles) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
@@ -72,6 +82,13 @@ fun SettingsScreen() {
                 "Subtitle providers",
                 "OpenSubtitles.org works without a key. Add free keys to also search OpenSubtitles.com " +
                     "(opensubtitles.com/consumers) and SubDL (subdl.com/panel/api).",
+            )
+            // Comes before the fields: focusing a field opens the keyboard, which is slow with a remote.
+            NetflixButton(
+                "Enter keys with your phone",
+                onClick = { phoneEntry = true },
+                icon = "📱",
+                modifier = Modifier.padding(bottom = 16.dp),
             )
             KeyField("OpenSubtitles.com API key", osKey) { osKey = it; store.openSubtitlesApiKey = it }
             KeyField("SubDL API key", subdlKey) { subdlKey = it; store.subdlApiKey = it }
