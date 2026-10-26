@@ -60,6 +60,7 @@ import com.dflixtv.app.subs.SubtitleFormats
 import com.dflixtv.app.subs.SubtitleQuery
 import com.dflixtv.app.subs.SubtitleRepository
 import com.dflixtv.app.subs.SubtitleResult
+import com.dflixtv.app.tv.WatchNext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
@@ -94,6 +95,12 @@ class PlayerActivity : ComponentActivity() {
     private var progressJob: Job? = null
     private var dialog: Dialog? = null
     private var networkRetries = 0
+    private lateinit var nextCard: View
+    private lateinit var nextNowButton: Button
+    private lateinit var nextTitle: TextView
+    /** Seconds left before the next episode starts, or null while the card is hidden. */
+    private var nextCountdown: Int? = null
+    private var nextCardDismissed = false
 
     private val currentFile: MediaFile? get() = details?.files?.firstOrNull { it.id == fileId }
 
@@ -113,6 +120,11 @@ class PlayerActivity : ComponentActivity() {
         loading = findViewById(R.id.loading)
         findViewById<Button>(R.id.btn_subtitles).setOnClickListener { showAudioSubtitlePanel() }
         nextButton.setOnClickListener { playNext() }
+        nextCard = findViewById(R.id.next_card)
+        nextTitle = findViewById(R.id.next_title)
+        nextNowButton = findViewById(R.id.btn_next_now)
+        nextNowButton.setOnClickListener { hideNextCard(); playNext() }
+        findViewById<Button>(R.id.btn_next_cancel).setOnClickListener { nextCardDismissed = true; hideNextCard() }
         pipButton = findViewById(R.id.btn_pip)
         pipButton.visibility = if (pipSupported) View.VISIBLE else View.GONE
         pipButton.setOnClickListener { enterPip() }
@@ -134,7 +146,11 @@ class PlayerActivity : ComponentActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (playerView.isControllerFullyVisible) playerView.hideController() else finish()
+                when {
+                    nextCountdown != null -> { nextCardDismissed = true; hideNextCard() }
+                    playerView.isControllerFullyVisible -> playerView.hideController()
+                    else -> finish()
+                }
             }
         })
 
@@ -235,6 +251,8 @@ class PlayerActivity : ComponentActivity() {
         activeLocalSubtitle = store.savedSubtitles(fileId).lastOrNull()
         subtitleOffsetMs = 0
         pendingSubtitleId = activeLocalSubtitle?.let { subtitleId(it) }
+        nextCardDismissed = false
+        hideNextCard()
         updateHeader()
 
         // Prepare paused: the video buffers and exposes its embedded tracks while we gather
@@ -355,11 +373,55 @@ class PlayerActivity : ComponentActivity() {
     private fun startProgressLoop() {
         progressJob?.cancel()
         progressJob = lifecycleScope.launch {
+            var tick = 0
             while (isActive) {
-                delay(10_000)
-                if (player.isPlaying) saveProgress()
+                delay(1_000)
+                updateNextCard()
+                if (++tick % 10 == 0 && player.isPlaying) saveProgress()
             }
         }
+    }
+
+    /**
+     * Near the end of an episode, shows "Next episode" with a countdown; when it runs out the next
+     * episode starts, skipping the rest of the credits. The countdown pauses with the video.
+     */
+    private fun updateNextCard() {
+        val next = nextFileId()
+        val duration = player.duration
+        if (!store.autoPlayNext || next == null || duration == C.TIME_UNSET || nextCardDismissed || isInPictureInPictureMode) {
+            hideNextCard()
+            return
+        }
+        val remaining = duration - player.currentPosition
+        if (remaining > NEXT_CARD_LEAD_MS) {
+            hideNextCard()
+            return
+        }
+        val countdown = nextCountdown
+        if (countdown == null) {
+            val file = details?.files?.firstOrNull { it.id == next }
+            nextTitle.text = listOfNotNull(file?.episodeCode, file?.episodeTitle).joinToString(" · ").ifEmpty { "Up next" }
+            nextCountdown = NEXT_COUNTDOWN_S
+            nextCard.visibility = View.VISIBLE
+            nextNowButton.requestFocus()
+        } else if (player.isPlaying) {
+            if (countdown <= 1) {
+                hideNextCard()
+                saveProgress()
+                playNext()
+                return
+            }
+            nextCountdown = countdown - 1
+        }
+        nextNowButton.text = "Play now (${nextCountdown})"
+    }
+
+    private fun hideNextCard() {
+        if (nextCountdown == null) return
+        nextCountdown = null
+        nextCard.visibility = View.GONE
+        playerView.requestFocus()
     }
 
     private fun saveProgress() {
@@ -369,34 +431,36 @@ class PlayerActivity : ComponentActivity() {
         if (position < 15_000) return
         val file = currentFile
         val next = nextFileId()
+        val isShow = details?.isShow == true || next != null
         if (position > duration * 0.95 && next != null) {
             // Finished an episode: Continue Watching offers the next one, like Netflix.
             val nextFile = details?.files?.firstOrNull { it.id == next }
-            store.savePosition(
-                ContinueEntry(
-                    titleId = titleId,
-                    fileId = next,
-                    title = details?.title ?: watchInfo?.titleName ?: "",
-                    subtitle = listOfNotNull(nextFile?.episodeCode, nextFile?.episodeTitle).joinToString(" · ").ifEmpty { null },
-                    imageUrl = nextFile?.stillUrl ?: details?.backdropUrl ?: watchInfo?.poster?.let(DflixApi::absolute),
-                    positionMs = 0,
-                    durationMs = 0,
-                )
+            val upNext = ContinueEntry(
+                titleId = titleId,
+                fileId = next,
+                title = details?.title ?: watchInfo?.titleName ?: "",
+                subtitle = listOfNotNull(nextFile?.episodeCode, nextFile?.episodeTitle).joinToString(" · ").ifEmpty { null },
+                imageUrl = nextFile?.stillUrl ?: details?.backdropUrl ?: watchInfo?.poster?.let(DflixApi::absolute),
+                positionMs = 0,
+                durationMs = 0,
             )
+            store.savePosition(upNext)
             store.clearPosition(fileId)
+            WatchNext.publish(this, upNext, isShow = true, upNext = true)
             return
         }
-        store.savePosition(
-            ContinueEntry(
-                titleId = titleId,
-                fileId = fileId,
-                title = details?.title ?: watchInfo?.titleName ?: "",
-                subtitle = listOfNotNull(file?.episodeCode, file?.episodeTitle).joinToString(" · ").ifEmpty { null },
-                imageUrl = file?.stillUrl ?: details?.backdropUrl ?: watchInfo?.poster?.let(DflixApi::absolute),
-                positionMs = position,
-                durationMs = duration,
-            )
+        val entry = ContinueEntry(
+            titleId = titleId,
+            fileId = fileId,
+            title = details?.title ?: watchInfo?.titleName ?: "",
+            subtitle = listOfNotNull(file?.episodeCode, file?.episodeTitle).joinToString(" · ").ifEmpty { null },
+            imageUrl = file?.stillUrl ?: details?.backdropUrl ?: watchInfo?.poster?.let(DflixApi::absolute),
+            positionMs = position,
+            durationMs = duration,
         )
+        store.savePosition(entry)
+        if (position > duration * 0.95) WatchNext.remove(this, titleId)
+        else WatchNext.publish(this, entry, isShow, upNext = false)
     }
 
     // endregion
@@ -679,6 +743,8 @@ class PlayerActivity : ComponentActivity() {
     // endregion
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // While the "Next episode" card is up, arrows and OK move between its buttons.
+        if (nextCountdown != null && event.keyCode in CARD_KEYS) return super.dispatchKeyEvent(event)
         when (event.keyCode) {
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND,
@@ -829,6 +895,12 @@ class PlayerActivity : ComponentActivity() {
         private const val EXTRA_TITLE_ID = "title_id"
         private const val AUTO_SUBTITLE_WAIT_MS = 8_000L
         private const val MAX_NETWORK_RETRIES = 3
+        private const val NEXT_CARD_LEAD_MS = 30_000L
+        private const val NEXT_COUNTDOWN_S = 10
+        private val CARD_KEYS = setOf(
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
+        )
         private const val ACTION_PIP_CONTROL = "com.dflixtv.app.PIP_CONTROL"
         private const val EXTRA_PIP_ACTION = "pip_action"
         private const val PIP_PLAY_PAUSE = 1

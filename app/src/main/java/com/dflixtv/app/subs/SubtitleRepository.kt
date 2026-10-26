@@ -36,8 +36,8 @@ class SubtitleRepository(private val context: Context, private val store: Store)
         val provider = providers.first { it.name == result.provider }
         val (name, bytes) = provider.download(result, query)
         return withContext(Dispatchers.IO) {
-            val text = decode(bytes, result.encodingHint)
             val ext = name.substringAfterLast('.', "srt").lowercase().takeIf { it in SubtitleFormats.SUPPORTED } ?: "srt"
+            val text = SubtitleAds.strip(decode(bytes, result.encodingHint), ext)
             val dir = File(context.filesDir, "subs/$fileId").apply { mkdirs() }
             val file = File(dir, "${System.currentTimeMillis()}.$ext")
             file.writeText(text, Charsets.UTF_8)
@@ -75,6 +75,23 @@ class SubtitleRepository(private val context: Context, private val store: Store)
 }
 
 data class SearchOutcome(val results: List<SubtitleResult>, val errors: List<String>)
+
+/** Removes the advert cues subtitle sites insert ("Watch Online Movies… osdb.link", "Support us and become VIP"). */
+object SubtitleAds {
+    private val AD = Regex(
+        """(?i)osdb\.link|opensubtitles|subdl\.com|become vip|advertise your product|www\.[a-z0-9-]+\.[a-z]{2,}|https?://"""
+    )
+
+    fun strip(text: String, ext: String): String =
+        if (ext in setOf("ass", "ssa")) {
+            text.lineSequence().filterNot { it.startsWith("Dialogue:") && AD.containsMatchIn(it) }.joinToString("\n")
+        } else {
+            // SRT and VTT: cues are blocks separated by blank lines; drop whole cues that advertise.
+            text.replace("\r\n", "\n").split(Regex("\n{2,}"))
+                .filterNot { block -> "-->" in block && AD.containsMatchIn(block.substringAfter("-->")) }
+                .joinToString("\n\n")
+        }
+}
 
 object SubtitleShifter {
     private val srtTime = Regex("""(\d{1,2}):(\d{2}):(\d{2})([,.])(\d{3})""")

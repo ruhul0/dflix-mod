@@ -1,5 +1,7 @@
 package com.dflixtv.app.ui
 
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -60,6 +62,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.dflixtv.app.data.BrowseFilter
+import com.dflixtv.app.player.PlayerActivity
 import com.dflixtv.app.update.Updater
 import kotlinx.coroutines.delay
 
@@ -88,6 +91,32 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        if (savedInstanceState == null) handlePlayIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handlePlayIntent(intent)
+    }
+
+    /** A "Continue watching" pick on the TV home screen opens the player directly. */
+    private fun handlePlayIntent(intent: Intent) {
+        val titleId = intent.getLongExtra(EXTRA_PLAY_TITLE, 0)
+        val fileId = intent.getLongExtra(EXTRA_PLAY_FILE, 0)
+        if (titleId == 0L || fileId == 0L) return
+        intent.removeExtra(EXTRA_PLAY_TITLE)
+        PlayerActivity.start(this, titleId, fileId)
+    }
+
+    companion object {
+        private const val EXTRA_PLAY_TITLE = "play_title"
+        private const val EXTRA_PLAY_FILE = "play_file"
+
+        fun playIntent(context: Context, titleId: Long, fileId: Long): Intent =
+            Intent(context, MainActivity::class.java)
+                .putExtra(EXTRA_PLAY_TITLE, titleId)
+                .putExtra(EXTRA_PLAY_FILE, fileId)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     }
 
     // Keyboard support: Esc works like the remote's Back button. Arrows and Enter already map to D-pad.

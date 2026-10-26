@@ -79,8 +79,15 @@ object AiSuggest {
     }
 
     /** Free-text request from Search, e.g. "space movies like Interstellar". */
-    suspend fun search(request: String): List<TitleSummary> =
-        resolve(ask("Suggest 30 movies or TV series that match this request: \"$request\"."), exclude = emptySet())
+    suspend fun search(request: String): List<TitleSummary> {
+        val picks = resolve(
+            ask("Suggest 30 movies or TV series that match this request: \"$request\". Don't include titles the request itself names."),
+            exclude = emptySet(),
+        )
+        // "Movies like Interstellar" shouldn't answer with Interstellar.
+        val reference = SIMILAR_TO.find(request)?.groupValues?.get(1)?.let(::normalize)
+        return picks.filterNot { reference != null && normalize(it.title) == reference }
+    }
 
     private suspend fun ask(prompt: String): List<String> {
         val body = buildJsonObject {
@@ -134,6 +141,8 @@ object AiSuggest {
             }
         }.awaitAll().filterNotNull().filter { it.id !in exclude }.distinctBy { it.id }
     }
+
+    private val SIMILAR_TO = Regex("""(?i)\b(?:like|similar to|such as)\s+(.+?)\s*$""")
 
     private fun normalize(title: String) = title.lowercase().filter { it.isLetterOrDigit() }
 

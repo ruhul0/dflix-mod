@@ -59,6 +59,8 @@ android {
 
     buildTypes {
         release {
+            // Ships symbol tables for the FFmpeg libraries so Play can symbolicate native crashes.
+            ndk { debugSymbolLevel = "SYMBOL_TABLE" }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -102,4 +104,5 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
     implementation(libs.coil.okhttp)
+    implementation(libs.androidx.tvprovider)
 }
