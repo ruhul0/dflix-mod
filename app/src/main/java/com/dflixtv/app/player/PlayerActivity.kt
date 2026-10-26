@@ -18,6 +18,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -98,6 +99,10 @@ class PlayerActivity : ComponentActivity() {
     private var dialog: Dialog? = null
     private var networkRetries = 0
     private var startOverrideMs: Long? = null
+    /** Sleep timer: stop at this elapsed-realtime, or when the current episode ends. */
+    private var sleepAtElapsed: Long? = null
+    private var sleepAfterEpisode = false
+    private var sleepTimerMinutes: Int? = null
     private lateinit var nextCard: View
     private lateinit var nextNowButton: Button
     private lateinit var nextTitle: TextView
@@ -207,7 +212,7 @@ class PlayerActivity : ComponentActivity() {
         override fun onPlaybackStateChanged(state: Int) {
             if (state == Player.STATE_ENDED) {
                 saveProgress()
-                if (store.autoPlayNext && nextFileId() != null) playNext() else finish()
+                if (store.autoPlayNext && nextFileId() != null && !sleepAfterEpisode) playNext() else finish()
             }
         }
 
@@ -381,6 +386,7 @@ class PlayerActivity : ComponentActivity() {
             var tick = 0
             while (isActive) {
                 delay(1_000)
+                checkSleepTimer()
                 updateNextCard()
                 publishNowPlaying()
                 if (++tick % 10 == 0 && player.isPlaying) saveProgress()
@@ -395,7 +401,7 @@ class PlayerActivity : ComponentActivity() {
     private fun updateNextCard() {
         val next = nextFileId()
         val duration = player.duration
-        if (!store.autoPlayNext || next == null || duration == C.TIME_UNSET || nextCardDismissed || isInPictureInPictureMode) {
+        if (!store.autoPlayNext || next == null || duration == C.TIME_UNSET || nextCardDismissed || sleepAfterEpisode || isInPictureInPictureMode) {
             hideNextCard()
             return
         }
@@ -421,6 +427,29 @@ class PlayerActivity : ComponentActivity() {
             nextCountdown = countdown - 1
         }
         nextNowButton.text = "Play now (${nextCountdown})"
+    }
+
+    private fun checkSleepTimer() {
+        val at = sleepAtElapsed ?: return
+        if (SystemClock.elapsedRealtime() < at) return
+        sleepAtElapsed = null
+        saveProgress()
+        player.pause()
+        toast("Sleep timer: stopped")
+        // Leaving the player lets the TV's screen saver and sleep take over.
+        finish()
+    }
+
+    private fun setSleepTimer(minutes: Int?, endOfEpisode: Boolean) {
+        sleepAtElapsed = minutes?.let { SystemClock.elapsedRealtime() + it * 60_000L }
+        sleepAfterEpisode = endOfEpisode
+        toast(
+            when {
+                endOfEpisode -> "Playback stops at the end of this episode"
+                minutes != null -> "Playback stops in $minutes minutes"
+                else -> "Sleep timer off"
+            }
+        )
     }
 
     private fun hideNextCard() {
@@ -550,8 +579,23 @@ class PlayerActivity : ComponentActivity() {
         }
 
         val speed = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).map { value ->
-            val label = if (value == 1f) "Normal" else "${value.toString().removeSuffix(".0")}x"
+            val label = if (value == 1f) "1x" else "${value.toString().removeSuffix(".0")}x"
             PanelOption(label, player.playbackParameters.speed == value) { player.setPlaybackSpeed(value) }
+        }
+
+        val minutesLeft = sleepAtElapsed?.let { ((it - SystemClock.elapsedRealtime()) / 60_000).coerceAtLeast(0) + 1 }
+        val sleep = buildList {
+            add(PanelOption("Off", sleepAtElapsed == null && !sleepAfterEpisode) { setSleepTimer(null, false) })
+            if (nextFileId() != null || details?.isShow == true) {
+                add(PanelOption("This episode", sleepAfterEpisode) { setSleepTimer(null, true) })
+            }
+            listOf(15, 30, 60, 90).forEach { m ->
+                val active = minutesLeft != null && sleepTimerMinutes == m
+                add(PanelOption(if (active) "$m min ($minutesLeft left)" else "$m min", active) {
+                    sleepTimerMinutes = m
+                    setSleepTimer(m, false)
+                })
+            }
         }
 
         val sizes = listOf("Small" to 0.8f, "Medium" to 1f, "Large" to 1.3f, "Extra large" to 1.6f).map { (label, scale) ->
@@ -564,10 +608,11 @@ class PlayerActivity : ComponentActivity() {
         dialog = showOptionsPanel(
             this,
             listOf(
-                PanelColumn("Audio", audio, weight = 1.1f),
-                PanelColumn("Subtitles", subtitleOptions, weight = 1.5f),
-                PanelColumn("Speed", speed, weight = 0.75f),
-                PanelColumn("Text size", sizes, weight = 0.95f),
+                PanelColumn("Audio", audio, weight = 1.15f),
+                PanelColumn("Subtitles", subtitleOptions, weight = 1.45f),
+                PanelColumn("Speed", speed, weight = 0.6f),
+                PanelColumn("Sleep timer", sleep, weight = 0.95f),
+                PanelColumn("Text size", sizes, weight = 0.9f),
             ),
             focusColumn = 1,
         )
@@ -629,7 +674,7 @@ class PlayerActivity : ComponentActivity() {
         val downloaded = format.id?.contains("local-") == true
         val label = format.label?.takeIf { !downloaded && it.isNotBlank() && (name == null || !it.startsWith(name, ignoreCase = true)) }
         val tags = buildList {
-            if (downloaded) add("Downloaded")
+            if (downloaded) add("Online")
             if (format.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND != 0) add("CC")
             if (format.selectionFlags and C.SELECTION_FLAG_FORCED != 0) add("Forced")
         }

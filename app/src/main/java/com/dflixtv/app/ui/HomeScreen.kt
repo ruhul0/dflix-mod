@@ -54,6 +54,10 @@ import com.dflixtv.app.data.TitleSummary
 import com.dflixtv.app.player.PlayerActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import java.io.File
 
 class HomeViewModel : ViewModel() {
     var rows by mutableStateOf<List<HomeRow>>(emptyList())
@@ -76,16 +80,33 @@ class HomeViewModel : ViewModel() {
     fun load() {
         error = null
         viewModelScope.launch {
+            // Last session's rows show instantly; fresh ones replace them when they arrive.
+            if (rows.isEmpty()) readCache()?.let(::show)
             runCatching { DflixApi.homeRows() }
                 .onSuccess { result ->
-                    rows = result
-                    if (featured == null) {
-                        featured = (result.firstOrNull { it.label.startsWith("Trending") } ?: result.firstOrNull())
-                            ?.titles?.firstOrNull { it.backdropPath != null }
-                    }
+                    show(result)
+                    writeCache(result)
                 }
                 .onFailure { error = it.message ?: "Could not load" }
         }
+    }
+
+    private fun show(result: List<HomeRow>) {
+        rows = result
+        if (featured == null) {
+            featured = (result.firstOrNull { it.label.startsWith("Trending") } ?: result.firstOrNull())
+                ?.titles?.firstOrNull { it.backdropPath != null }
+        }
+    }
+
+    private val cacheFile get() = File(DflixApp.instance.filesDir, "home-rows.json")
+
+    private suspend fun readCache(): List<HomeRow>? = withContext(Dispatchers.IO) {
+        runCatching { DflixApi.json.decodeFromString<List<HomeRow>>(cacheFile.readText()) }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
+    private suspend fun writeCache(result: List<HomeRow>) = withContext(Dispatchers.IO) {
+        runCatching { cacheFile.writeText(DflixApi.json.encodeToString(result)) }
     }
 
     fun refreshLocal() {
