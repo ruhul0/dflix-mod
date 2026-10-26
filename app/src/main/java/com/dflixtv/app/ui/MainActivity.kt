@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import com.dflixtv.app.data.BrowseFilter
 import com.dflixtv.app.player.PlayerActivity
 import com.dflixtv.app.cast.CastClient
+import com.dflixtv.app.data.SyncState
 import androidx.compose.foundation.clickable
 import com.dflixtv.app.update.Updater
 import kotlinx.coroutines.delay
@@ -99,7 +100,10 @@ class MainActivity : ComponentActivity() {
     // Phones look for DFLIX TVs on the Wi-Fi while the app is open, for "Play on TV".
     override fun onStart() {
         super.onStart()
-        if (!isTv()) CastClient.startDiscovery(this)
+        if (!isTv()) {
+            CastClient.startDiscovery(this)
+            CastClient.syncAll()
+        }
     }
 
     override fun onStop() {
@@ -302,7 +306,7 @@ private fun MainScreen(open: (Long) -> Unit) {
 
 @Composable
 private fun MyListScreen(open: (Long) -> Unit) {
-    var titles by remember { mutableStateOf(DflixApp.store.myList()) }
+    var titles by remember(SyncState.version) { mutableStateOf(DflixApp.store.myList()) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { titles = DflixApp.store.myList() }
     if (titles.isEmpty()) {
         CenterMessage("Add shows and movies with + My List to find them here")

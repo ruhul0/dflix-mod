@@ -9,6 +9,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.dflixtv.app.DflixApp
 import com.dflixtv.app.data.DflixApi
+import com.dflixtv.app.data.SyncData
+import com.dflixtv.app.data.SyncMerge
+import com.dflixtv.app.data.SyncState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
@@ -84,6 +91,7 @@ object CastClient {
                 info.host?.hostAddress?.let { host ->
                     val target = CastTarget(info.serviceName, host, info.port)
                     targets = (targets.filterNot { it.name == target.name } + target).sortedBy { it.name }
+                    syncInBackground(target)
                 }
                 done()
             }
@@ -118,6 +126,30 @@ object CastClient {
         })
         active = target
     }
+
+    /** Exchanges Continue Watching and My List with [target]; both sides end up with the merge. */
+    suspend fun sync(target: CastTarget) {
+        val store = DflixApp.store
+        val body = FormBody.Builder().add("data", DflixApi.json.encodeToString(store.syncData())).build()
+        val merged = withContext(Dispatchers.IO) {
+            http.newCall(Request.Builder().url("${target.baseUrl}/sync").post(body).build()).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("TV answered HTTP ${response.code}")
+                DflixApi.json.decodeFromString<SyncData>(response.body.string())
+            }
+        }
+        // Merge again in case something changed here while the request was in flight.
+        store.applySync(SyncMerge.merge(store.syncData(), merged))
+        SyncState.changed()
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    private fun syncInBackground(target: CastTarget) {
+        scope.launch { runCatching { sync(target) }.onFailure { Log.w(TAG, "sync with ${target.name} failed", it) } }
+    }
+
+    /** On opening the app: catch up with every TV already known. */
+    fun syncAll() = targets.forEach(::syncInBackground)
 
     suspend fun control(action: String) {
         val target = active ?: return

@@ -56,7 +56,7 @@ class MiniHttpServer(private val name: String, preferredPort: Int = 0, private v
             if (line.isEmpty()) break
             if (line.startsWith("Content-Length:", ignoreCase = true)) contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
         }
-        val body = CharArray(contentLength.coerceIn(0, 16_384)).let { buf ->
+        val body = CharArray(contentLength.coerceIn(0, 512 * 1024)).let { buf ->
             var read = 0
             while (read < buf.size) {
                 val n = reader.read(buf, read, buf.size - read)

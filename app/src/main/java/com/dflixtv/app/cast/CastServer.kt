@@ -8,6 +8,11 @@ import android.provider.Settings
 import android.util.Log
 import com.dflixtv.app.DflixApp
 import com.dflixtv.app.data.DflixApi
+import com.dflixtv.app.data.SyncData
+import com.dflixtv.app.data.SyncMerge
+import com.dflixtv.app.data.SyncState
+import android.os.Handler
+import android.os.Looper
 import com.dflixtv.app.net.MiniHttpServer
 import com.dflixtv.app.player.PlayerActivity
 import kotlinx.serialization.Serializable
@@ -32,11 +37,12 @@ data class CastStatus(
 
 /**
  * Runs on the TV: announces "DFLIX on <TV>" on the local network (mDNS service [SERVICE_TYPE]) and
- * accepts play and remote-control requests from the DFLIX phone app.
+ * accepts play, remote-control and sync requests from the DFLIX phone app.
  *
  *   GET  /status                         → [CastStatus] JSON
  *   POST /play     title, file, [pos]    → starts that file on the TV
  *   POST /control  action=toggle|back|forward|stop
+ *   POST /sync     data=[SyncData] JSON  → merges with the TV's and returns the result
  */
 object CastServer {
     const val SERVICE_TYPE = "_dflixtv._tcp."
@@ -84,6 +90,15 @@ object CastServer {
                 if (!DflixApp.inForeground) return MiniHttpServer.Response.json("""{"error":"Open DFLIX on the TV first"}""", 409)
                 PlayerActivity.start(context, titleId, fileId, startMs = request.form["pos"]?.toLongOrNull())
                 MiniHttpServer.Response.json("""{"ok":true}""")
+            }
+            "/sync" -> {
+                val remote = request.form["data"]?.let { runCatching { json.decodeFromString<SyncData>(it) }.getOrNull() }
+                    ?: return MiniHttpServer.Response.json("""{"error":"bad request"}""", 400)
+                val store = DflixApp.store
+                val merged = SyncMerge.merge(store.syncData(), remote)
+                store.applySync(merged)
+                Handler(Looper.getMainLooper()).post { SyncState.changed() }
+                MiniHttpServer.Response.json(json.encodeToString(merged))
             }
             "/control" -> {
                 if (request.method != "POST") return MiniHttpServer.Response.json("""{"error":"bad request"}""", 400)

@@ -61,6 +61,8 @@ class Store(context: Context) {
             if (finished) remove("pos_${entry.fileId}") else putLong("pos_${entry.fileId}", entry.positionMs)
             if (!finished) list.add(0, entry)
             putString("continue", json.encodeToString(list.take(30)))
+            // Remembered so syncing with another device doesn't bring the finished title back.
+            if (finished) putString("continue_removed", json.encodeToString(timeMap("continue_removed") + (entry.titleId to System.currentTimeMillis())))
         }
     }
 
@@ -83,9 +85,43 @@ class Store(context: Context) {
         val list = myList()
         val present = list.any { it.id == title.id }
         val updated = if (present) list.filterNot { it.id == title.id } else listOf(title) + list
-        prefs.edit { putString("my_list", json.encodeToString(updated)) }
+        val now = System.currentTimeMillis()
+        prefs.edit {
+            putString("my_list", json.encodeToString(updated))
+            // Change times let the newest change win when syncing with another device.
+            if (present) putString("my_list_removed", json.encodeToString(timeMap("my_list_removed") + (title.id to now)))
+            else putString("my_list_added", json.encodeToString(timeMap("my_list_added") + (title.id to now)))
+        }
         return !present
     }
+
+    // endregion
+
+    // region Sync between phone and TV
+
+    fun syncData() = SyncData(
+        continueWatching = continueWatching(),
+        continueRemoved = timeMap("continue_removed"),
+        myList = myList(),
+        myListAdded = timeMap("my_list_added"),
+        myListRemoved = timeMap("my_list_removed"),
+    )
+
+    /** Replaces local Continue Watching and My List with [data] (already merged with ours). */
+    fun applySync(data: SyncData) {
+        prefs.edit {
+            putString("continue", json.encodeToString(data.continueWatching))
+            putString("continue_removed", json.encodeToString(data.continueRemoved))
+            putString("my_list", json.encodeToString(data.myList))
+            putString("my_list_added", json.encodeToString(data.myListAdded))
+            putString("my_list_removed", json.encodeToString(data.myListRemoved))
+            // Resume where the other device left off.
+            data.continueWatching.filter { it.positionMs > 0 }.forEach { putLong("pos_${it.fileId}", it.positionMs) }
+        }
+    }
+
+    private fun timeMap(key: String): Map<Long, Long> =
+        runCatching { json.decodeFromString<Map<Long, Long>>(prefs.getString(key, "{}")!!) }.getOrDefault(emptyMap())
 
     // endregion
 

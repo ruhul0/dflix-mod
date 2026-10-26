@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,7 @@ import com.dflixtv.app.data.ContinueEntry
 import com.dflixtv.app.data.DflixApi
 import com.dflixtv.app.data.HomeRow
 import com.dflixtv.app.data.NewEpisodes
+import com.dflixtv.app.data.SyncState
 import com.dflixtv.app.data.TitleSummary
 import com.dflixtv.app.player.PlayerActivity
 import kotlinx.coroutines.Job
@@ -129,6 +131,8 @@ fun HomeScreen(open: (Long) -> Unit, topInset: Dp, listState: LazyListState) {
     val context = LocalContext.current
     val isTv = LocalIsTv.current
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshLocal() }
+    // The other device's Continue Watching and My List arrived.
+    LaunchedEffect(SyncState.version) { vm.refreshLocal() }
 
     if (vm.rows.isEmpty()) {
         val error = vm.error
