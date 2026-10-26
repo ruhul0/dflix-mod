@@ -13,10 +13,6 @@ class Store(context: Context) {
 
     // region Settings
 
-    /** OpenSubtitles language codes, e.g. "eng", "ben". */
-    var subtitleLanguage: String
-        get() = prefs.getString("sub_lang", "eng") ?: "eng"
-        set(value) = prefs.edit { putString("sub_lang", value) }
 
     var openSubtitlesApiKey: String
         get() = prefs.getString("os_key", "") ?: ""
@@ -36,7 +32,7 @@ class Store(context: Context) {
         get() = prefs.getString("audio_lang", "original") ?: "original"
         set(value) = prefs.edit { putString("audio_lang", value) }
 
-    /** Load a subtitle in [subtitleLanguage] automatically when a video starts. */
+    /** Load an English subtitle automatically when a video starts. */
     var autoSubtitles: Boolean
         get() = prefs.getBoolean("auto_subs", true)
         set(value) = prefs.edit { putBoolean("auto_subs", value) }

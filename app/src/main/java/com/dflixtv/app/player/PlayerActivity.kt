@@ -311,7 +311,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun buildMediaItem(): MediaItem {
         val configs = buildList {
-            watchInfo?.subtitles?.forEach { sub ->
+            watchInfo?.subtitles?.filter { isEnglishOrUnknown(it.lang) }?.forEach { sub ->
                 add(
                     MediaItem.SubtitleConfiguration.Builder(Uri.parse(DflixApi.absolute(sub.src)))
                         .setId("dflix-${sub.id}")
@@ -528,6 +528,7 @@ class PlayerActivity : ComponentActivity() {
         }
 
         val textGroups = tracks.filter { it.type == C.TRACK_TYPE_TEXT }
+        val englishTrack = { group: Tracks.Group, index: Int -> isEnglishOrUnknown(group.getTrackFormat(index).language) }
         val subtitlesOff = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT) ||
             textGroups.none { it.isSelected }
         val subtitleOptions = buildList {
@@ -537,14 +538,14 @@ class PlayerActivity : ComponentActivity() {
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
             })
             textGroups.forEach { group ->
-                (0 until group.length).filter { group.isTrackSupported(it) }.forEach { index ->
+                (0 until group.length).filter { group.isTrackSupported(it) && englishTrack(group, it) }.forEach { index ->
                     val format = group.getTrackFormat(index)
                     add(PanelOption(subtitleLabel(format), !subtitlesOff && group.isTrackSelected(index)) {
                         selectSubtitleTrack(group, index)
                     })
                 }
             }
-            add(PanelOption("Find more online…") { showSubtitleSearchMenu() })
+            add(PanelOption("Find more online…") { searchSubtitles(ENGLISH) })
             if (activeLocalSubtitle != null && !subtitlesOff) add(PanelOption("Adjust timing…") { showSyncDialog() })
         }
 
@@ -581,10 +582,11 @@ class PlayerActivity : ComponentActivity() {
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
             .build()
-        format.language?.let { lang ->
-            Language.ALL.firstOrNull { it.code2.substringBefore('-') == lang.substringBefore('-') }?.let { store.subtitleLanguage = it.code3 }
-        }
     }
+
+    /** Subtitles are English only; tracks without a language tag are usually English too. */
+    private fun isEnglishOrUnknown(language: String?): Boolean =
+        language == null || language == "und" || language.substringBefore('-').lowercase() in setOf("en", "eng")
 
     private fun applySubtitleScale() {
         playerView.subtitleView?.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * store.subtitleScale)
@@ -635,14 +637,6 @@ class PlayerActivity : ComponentActivity() {
             .joinToString(" · ")
     }
 
-    private fun showSubtitleSearchMenu() {
-        val language = Language.byCode3(store.subtitleLanguage)
-        val options = listOf(
-            "Search online (${language.name})" to { searchSubtitles(language) },
-            "Search in another language…" to { pickLanguageThenSearch() },
-        )
-        showList("Find subtitles", options.map { it.first }) { options[it].second() }
-    }
 
     /**
      * Picks a subtitle in the preferred language without user action. An embedded track is selected
@@ -650,7 +644,7 @@ class PlayerActivity : ComponentActivity() {
      * caller can attach it before playback starts.
      */
     private suspend fun findAutoSubtitle(forFileId: Long): SavedSubtitle? {
-        val language = Language.byCode3(store.subtitleLanguage)
+        val language = ENGLISH
         val tag = language.code2.substringBefore('-')
 
         // The paused player exposes the container's tracks (embedded subtitles show up here).
@@ -676,14 +670,6 @@ class PlayerActivity : ComponentActivity() {
         val best = runCatching { subtitles.search(query).results }.getOrNull()?.firstOrNull() ?: return null
         if (forFileId != fileId) return null
         return runCatching { subtitles.download(best, query, forFileId) }.getOrNull()
-    }
-
-    private fun pickLanguageThenSearch() {
-        showList("Subtitle language", Language.ALL.map { it.name }) { index ->
-            val language = Language.ALL[index]
-            store.subtitleLanguage = language.code3
-            searchSubtitles(language)
-        }
     }
 
     private fun searchSubtitles(language: Language) {
@@ -920,6 +906,7 @@ class PlayerActivity : ComponentActivity() {
         private const val EXTRA_TITLE_ID = "title_id"
         private const val AUTO_SUBTITLE_WAIT_MS = 8_000L
         private const val MAX_NETWORK_RETRIES = 3
+        private val ENGLISH = Language.byCode3("eng")
         private const val NEXT_CARD_LEAD_MS = 30_000L
         private const val NEXT_COUNTDOWN_S = 10
         private val CARD_KEYS = setOf(

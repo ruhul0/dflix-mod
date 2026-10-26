@@ -21,6 +21,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +45,6 @@ fun SettingsScreen() {
     val store = DflixApp.store
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var language by remember { mutableStateOf(store.subtitleLanguage) }
     var audioLanguage by remember { mutableStateOf(store.audioLanguage) }
     var osKey by remember { mutableStateOf(store.openSubtitlesApiKey) }
     var subdlKey by remember { mutableStateOf(store.subdlApiKey) }
@@ -70,14 +76,6 @@ fun SettingsScreen() {
             }
         }
         item {
-            Header("Subtitle language", "Used when searching subtitles online.")
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 6.dp)) {
-                items(Language.ALL) { lang ->
-                    Pill(lang.name, selected = language == lang.code3, onClick = { language = lang.code3; store.subtitleLanguage = lang.code3 })
-                }
-            }
-        }
-        item {
             Header(
                 "Subtitle providers",
                 "OpenSubtitles.org works without a key. Add free keys to also search OpenSubtitles.com " +
@@ -104,7 +102,7 @@ fun SettingsScreen() {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Header("Auto-load subtitles", "Turns on a subtitle in the language above when a video starts, finding one online if needed.")
+                    Header("Auto-load subtitles", "Turns on English subtitles when a video starts, finding them online if needed.")
                 }
                 Switch(
                     checked = autoSubs,
@@ -154,6 +152,42 @@ private fun Header(title: String, subtitle: String?) {
 private fun KeyField(label: String, value: String, onChange: (String) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
         Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 6.dp))
-        SearchTextField(value, onChange, "Not set", Modifier.fillMaxWidth(if (LocalIsTv.current) 0.6f else 1f))
+        if (LocalIsTv.current) {
+            // A text field would open the keyboard as soon as the remote passes over it, so on TV
+            // the value shows as a button and OK opens an edit dialog.
+            var editing by remember { mutableStateOf(false) }
+            Text(
+                value.ifEmpty { "Not set" }.let { if (it.length > 24) it.take(10) + "…" + it.takeLast(6) else it },
+                color = if (value.isEmpty()) Dim else Color.White,
+                fontSize = 18.sp,
+                modifier = Modifier
+                    .fillMaxWidth(0.6f)
+                    .focusRing(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF1C1C22), RoundedCornerShape(8.dp))
+                    .clickable { editing = true }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+            )
+            if (editing) TextEntryDialog(label, value, onDismiss = { editing = false }) { onChange(it); editing = false }
+        } else {
+            SearchTextField(value, onChange, "Not set", Modifier.fillMaxWidth())
+        }
     }
+}
+
+/** Edits one text value in a dialog; the keyboard opens straight away. */
+@Composable
+private fun TextEntryDialog(title: String, initial: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Background,
+        title = { Text(title, color = Color.White) },
+        text = {
+            SearchTextField(text, { text = it }, "Type here", Modifier.fillMaxWidth().focusRequester(focus), onDone = { onSave(text.trim()) })
+        },
+        confirmButton = { NetflixButton("Save", onClick = { onSave(text.trim()) }, primary = true) },
+        dismissButton = { NetflixButton("Cancel", onClick = onDismiss) },
+    )
 }
