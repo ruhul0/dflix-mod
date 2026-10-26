@@ -33,15 +33,24 @@ data class CastStatus(
     val playing: Boolean = false,
     val positionMs: Long = 0,
     val durationMs: Long = 0,
+    val hasNext: Boolean = false,
+    /** The player's Audio & Subtitles options, so the phone can change them. */
+    val columns: List<RemoteColumn> = emptyList(),
 )
+
+@Serializable
+data class RemoteColumn(val title: String, val options: List<RemoteOption>)
+
+@Serializable
+data class RemoteOption(val label: String, val selected: Boolean)
 
 /**
  * Runs on the TV: announces "DFLIX on <TV>" on the local network (mDNS service [SERVICE_TYPE]) and
  * accepts play, remote-control and sync requests from the DFLIX phone app.
  *
  *   GET  /status                         → [CastStatus] JSON
- *   POST /play     title, file, [pos]    → starts that file on the TV
- *   POST /control  action=toggle|back|forward|stop
+ *   POST /play     title, file, [pos], [audio], [subtitles=on|off] → starts that file on the TV
+ *   POST /control  action=toggle|back|forward|stop|next, seek (pos), pick (column, label)
  *   POST /sync     data=[SyncData] JSON  → merges with the TV's and returns the result
  */
 object CastServer {
@@ -91,7 +100,12 @@ object CastServer {
                 if (request.method != "POST" || titleId == null || fileId == null) return MiniHttpServer.Response.json("""{"error":"bad request"}""", 400)
                 // Android only lets an app open a screen while it is in front.
                 if (!DflixApp.inForeground) return MiniHttpServer.Response.json("""{"error":"Open DFLIX on the TV first"}""", 409)
-                PlayerActivity.start(context, titleId, fileId, startMs = request.form["pos"]?.toLongOrNull())
+                PlayerActivity.start(
+                    context, titleId, fileId,
+                    startMs = request.form["pos"]?.toLongOrNull(),
+                    audio = request.form["audio"]?.takeIf { it.isNotBlank() },
+                    subtitlesOn = request.form["subtitles"]?.let { it == "on" },
+                )
                 MiniHttpServer.Response.json("""{"ok":true}""")
             }
             "/sync" -> {
@@ -110,9 +124,17 @@ object CastServer {
                     "back" -> PlayerActivity.CONTROL_BACK
                     "forward" -> PlayerActivity.CONTROL_FORWARD
                     "stop" -> PlayerActivity.CONTROL_STOP
+                    "next" -> PlayerActivity.CONTROL_NEXT
+                    "seek" -> PlayerActivity.CONTROL_SEEK
+                    "pick" -> PlayerActivity.CONTROL_PICK
                     else -> return MiniHttpServer.Response.json("""{"error":"unknown action"}""", 400)
                 }
-                context.sendBroadcast(PlayerActivity.controlIntent(context, action))
+                val intent = PlayerActivity.controlIntent(context, action).apply {
+                    request.form["pos"]?.toLongOrNull()?.let { putExtra(PlayerActivity.EXTRA_VALUE, it) }
+                    request.form["column"]?.let { putExtra(PlayerActivity.EXTRA_COLUMN, it) }
+                    request.form["label"]?.let { putExtra(PlayerActivity.EXTRA_LABEL, it) }
+                }
+                context.sendBroadcast(intent)
                 MiniHttpServer.Response.json("""{"ok":true}""")
             }
             else -> MiniHttpServer.Response.json("""{"error":"not found"}""", 404)

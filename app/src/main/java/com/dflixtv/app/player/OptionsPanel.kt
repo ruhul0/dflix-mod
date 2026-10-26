@@ -16,7 +16,10 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.dflixtv.app.ui.isTv
 
-class PanelOption(val label: String, val selected: Boolean = false, val onPick: () -> Unit)
+/** Where an option is offered: the TV's own panel, the phone remote, or both. */
+enum class Shown { EVERYWHERE, TV_ONLY, REMOTE_ONLY }
+
+class PanelOption(val label: String, val selected: Boolean = false, val shown: Shown = Shown.EVERYWHERE, val onPick: () -> Unit)
 
 class PanelColumn(val title: String, val options: List<PanelOption>, val weight: Float = 1f)
 
@@ -42,7 +45,8 @@ fun showOptionsPanel(context: Context, columns: List<PanelColumn>, focusColumn: 
     var initialFocus: View? = null
     var initialFocusColumn = -1
 
-    columns.forEachIndexed { columnIndex, column ->
+    columns.forEachIndexed { columnIndex, all ->
+        val column = PanelColumn(all.title, all.options.filter { it.shown != Shown.REMOTE_ONLY }, all.weight)
         if (column.options.isEmpty()) return@forEachIndexed
         val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         list.addView(TextView(context).apply {

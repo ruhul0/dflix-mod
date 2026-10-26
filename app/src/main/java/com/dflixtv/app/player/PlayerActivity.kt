@@ -63,6 +63,8 @@ import com.dflixtv.app.subs.SubtitleRepository
 import com.dflixtv.app.subs.SubtitleResult
 import com.dflixtv.app.tv.WatchNext
 import com.dflixtv.app.cast.CastStatus
+import com.dflixtv.app.cast.RemoteColumn
+import com.dflixtv.app.cast.RemoteOption
 import com.dflixtv.app.cast.NowPlaying
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -91,9 +93,14 @@ class PlayerActivity : ComponentActivity() {
     private var fileId = 0L
     private var details: TitleDetails? = null
     private var watchInfo: WatchInfo? = null
+    /** The downloaded subtitle being drawn by [side], if any. */
     private var activeLocalSubtitle: SavedSubtitle? = null
-    private var pendingSubtitleId: String? = null
     private var subtitleOffsetMs = 0L
+    private lateinit var sideView: SubtitleView
+    private lateinit var side: SideSubtitles
+    /** From a phone's "Play on TV": its audio language and whether subtitles were on. */
+    private var audioOverride: String? = null
+    private var subtitlesOverride: Boolean? = null
     private var progressJob: Job? = null
     private var dialog: Dialog? = null
     private var networkRetries = 0
@@ -113,6 +120,7 @@ class PlayerActivity : ComponentActivity() {
         titleId = intent.getLongExtra(EXTRA_TITLE_ID, 0)
         fileId = intent.getLongExtra(EXTRA_FILE_ID, 0)
         startOverrideMs = intent.getLongExtra(EXTRA_START_MS, -1).takeIf { it >= 0 }
+        readPhoneChoices(intent)
 
         playerView = findViewById(R.id.player_view)
         topBar = findViewById(R.id.top_bar)
@@ -133,13 +141,15 @@ class PlayerActivity : ComponentActivity() {
         playerView.player = player
         // Audio, subtitles and speed all live in our own Audio & Subtitles panel.
         playerView.findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.visibility = View.GONE
+        sideView = findViewById<SubtitleView>(R.id.side_subtitles).apply { setUserDefaultStyle() }
+        side = SideSubtitles(sideView) { player.currentPosition }
         applySubtitleScale()
         playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
             topBar.visibility = visibility
             // Lift subtitles above the seek bar while the controls are showing.
-            playerView.subtitleView?.setBottomPaddingFraction(
-                if (visibility == View.VISIBLE) 0.2f else SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION
-            )
+            val padding = if (visibility == View.VISIBLE) 0.2f else SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION
+            playerView.subtitleView?.setBottomPaddingFraction(padding)
+            sideView.setBottomPaddingFraction(padding)
         })
         playerView.requestFocus()
         if (!isTv()) PhoneGestures(this, playerView, player, findViewById(R.id.gesture_hint)).attach()
@@ -163,7 +173,7 @@ class PlayerActivity : ComponentActivity() {
      * Commentary and descriptive-audio tracks are avoided by preferring main-role tracks.
      */
     private fun applyAudioPreference() {
-        val preferred = store.audioLanguage
+        val preferred = audioOverride ?: store.audioLanguage
         val languages = buildList {
             if (preferred == "original") details?.originalLanguage?.let(::add) else add(preferred)
             add("en")
@@ -207,18 +217,6 @@ class PlayerActivity : ComponentActivity() {
             }
         }
 
-        override fun onTracksChanged(tracks: Tracks) {
-            val wanted = pendingSubtitleId ?: return
-            val group = tracks.groups.firstOrNull { g ->
-                g.type == C.TRACK_TYPE_TEXT && (0 until g.length).any { g.getTrackFormat(it).id?.contains(wanted) == true }
-            } ?: return
-            pendingSubtitleId = null
-            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
-                .build()
-        }
-
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying) networkRetries = 0
             updatePipParams()
@@ -248,9 +246,9 @@ class PlayerActivity : ComponentActivity() {
         saveProgress()
         fileId = newFileId
         watchInfo = null
-        activeLocalSubtitle = store.savedSubtitles(fileId).lastOrNull()
+        activeLocalSubtitle = null
+        side.clear()
         subtitleOffsetMs = 0
-        pendingSubtitleId = activeLocalSubtitle?.let { subtitleId(it) }
         nextCardDismissed = false
         hideNextCard()
         updateHeader()
@@ -275,24 +273,25 @@ class PlayerActivity : ComponentActivity() {
             applyAudioPreference()
             updateHeader()
 
-            var rebuild = watchInfo?.subtitles?.isNotEmpty() == true
-            if (store.autoSubtitles && activeLocalSubtitle == null) {
-                val search = async { findAutoSubtitle(loadingFileId) }
-                val found = withTimeoutOrNull(AUTO_SUBTITLE_WAIT_MS) { search.await() }
-                if (found != null) {
-                    activeLocalSubtitle = found
-                    pendingSubtitleId = subtitleId(found)
-                    rebuild = true
-                } else if (search.isActive) {
-                    // Slow network: start now and attach the subtitle when it arrives.
-                    launch { search.await()?.let { if (loadingFileId == fileId) selectLocal(it) } }
-                }
-            }
-            if (loadingFileId != fileId) return@launch
-            if (rebuild) {
+            // DFLIX's own subtitle files are part of the media item, so add them before playback starts.
+            if (watchInfo?.subtitles?.isNotEmpty() == true) {
                 player.setMediaItem(buildMediaItem(), start)
                 player.prepare()
             }
+            val wantSubtitles = subtitlesOverride ?: store.autoSubtitles
+            val saved = store.savedSubtitles(fileId).lastOrNull { File(it.path).exists() }
+            when {
+                !wantSubtitles -> disableTextTrack()
+                saved != null -> selectLocal(saved)
+                else -> {
+                    val search = async { findAutoSubtitle(loadingFileId) }
+                    val found = withTimeoutOrNull(AUTO_SUBTITLE_WAIT_MS) { search.await() }
+                    if (found != null) selectLocal(found)
+                    // Slow network: start now; the subtitle appears when it arrives, without a reload.
+                    else if (search.isActive) launch { search.await()?.let { if (loadingFileId == fileId) selectLocal(it) } }
+                }
+            }
+            if (loadingFileId != fileId) return@launch
             player.playWhenReady = true
             setStarting(false)
         }
@@ -318,16 +317,6 @@ class PlayerActivity : ComponentActivity() {
                         .build()
                 )
             }
-            store.savedSubtitles(fileId).filter { File(it.path).exists() }.forEach { sub ->
-                add(
-                    MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(File(sub.path)))
-                        .setId(subtitleId(sub))
-                        .setMimeType(SubtitleFormats.mimeType(sub.path))
-                        .setLabel(sub.label)
-                        .setLanguage(sub.language)
-                        .build()
-                )
-            }
         }
         return MediaItem.Builder()
             .setUri(DflixApi.streamUrl(fileId))
@@ -337,15 +326,6 @@ class PlayerActivity : ComponentActivity() {
             .build()
     }
 
-    private fun reloadKeepingPosition() {
-        val position = player.currentPosition
-        val wasPlaying = player.playWhenReady
-        player.setMediaItem(buildMediaItem(), position)
-        player.prepare()
-        player.playWhenReady = wasPlaying
-    }
-
-    private fun subtitleId(sub: SavedSubtitle) = "local-" + File(sub.path).nameWithoutExtension
 
     private fun headerText(): String {
         val file = currentFile
@@ -429,6 +409,10 @@ class PlayerActivity : ComponentActivity() {
             playing = player.isPlaying,
             positionMs = player.currentPosition,
             durationMs = player.duration.takeIf { it != C.TIME_UNSET } ?: 0,
+            hasNext = nextFileId() != null,
+            columns = optionColumns().map { column ->
+                RemoteColumn(column.title, column.options.filter { it.shown != Shown.TV_ONLY }.map { RemoteOption(it.label, it.selected) })
+            },
         )
     }
 
@@ -495,6 +479,11 @@ class PlayerActivity : ComponentActivity() {
     /** Netflix-style panel: audio tracks, subtitle tracks, playback speed and subtitle size. */
     private fun showAudioSubtitlePanel() {
         dialog?.dismiss()
+        dialog = showOptionsPanel(this, optionColumns(), focusColumn = 1)
+    }
+
+    /** Audio, subtitles, speed, sleep timer and text size: shown in the TV panel and on the phone remote. */
+    private fun optionColumns(): List<PanelColumn> {
         val tracks = player.currentTracks.groups
         val original = details?.originalLanguage
 
@@ -516,24 +505,31 @@ class PlayerActivity : ComponentActivity() {
 
         val textGroups = tracks.filter { it.type == C.TRACK_TYPE_TEXT }
         val englishTrack = { group: Tracks.Group, index: Int -> TrackLabels.isEnglishOrUnknown(group.getTrackFormat(index).language) }
-        val subtitlesOff = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT) ||
-            textGroups.none { it.isSelected }
+        val trackShowing = !player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT) &&
+            textGroups.any { it.isSelected }
+        val subtitlesOff = !side.isActive && !trackShowing
+        val saved = store.savedSubtitles(fileId).filter { File(it.path).exists() }
         val subtitleOptions = buildList {
-            add(PanelOption("Off", subtitlesOff) {
-                activeLocalSubtitle = null
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
-            })
+            add(PanelOption("Off", subtitlesOff) { turnSubtitlesOff() })
             textGroups.forEach { group ->
                 (0 until group.length).filter { group.isTrackSupported(it) && englishTrack(group, it) }.forEach { index ->
                     val format = group.getTrackFormat(index)
-                    add(PanelOption(TrackLabels.subtitleLabel(format), !subtitlesOff && group.isTrackSelected(index)) {
+                    add(PanelOption(TrackLabels.subtitleLabel(format), !side.isActive && trackShowing && group.isTrackSelected(index)) {
                         selectSubtitleTrack(group, index)
                     })
                 }
             }
-            add(PanelOption("Find more online…") { searchSubtitles(ENGLISH) })
-            if (activeLocalSubtitle != null && !subtitlesOff) add(PanelOption("Adjust timing…") { showSyncDialog() })
+            // Downloaded subtitles, drawn without reloading the video.
+            saved.forEachIndexed { i, sub ->
+                val label = if (saved.size > 1) "English · Online ${i + 1}" else "English · Online"
+                add(PanelOption(label, side.isActive && activeLocalSubtitle?.path == sub.path) { selectLocal(sub) })
+            }
+            // These open lists and dialogs on the TV, so the phone gets a one-tap download instead.
+            add(PanelOption("Find more online…", shown = Shown.TV_ONLY) { searchSubtitles(ENGLISH) })
+            add(PanelOption("Get best online match", shown = Shown.REMOTE_ONLY) { downloadBestSubtitle() })
+            if (activeLocalSubtitle != null && !subtitlesOff) {
+                add(PanelOption("Adjust timing…", shown = Shown.TV_ONLY) { showSyncDialog() })
+            }
         }
 
         val speed = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).map { value ->
@@ -560,32 +556,56 @@ class PlayerActivity : ComponentActivity() {
             }
         }
 
-        dialog = showOptionsPanel(
-            this,
-            listOf(
-                PanelColumn("Audio", audio, weight = 1.15f),
-                PanelColumn("Subtitles", subtitleOptions, weight = 1.45f),
-                PanelColumn("Speed", speed, weight = 0.6f),
-                PanelColumn("Sleep timer", sleep, weight = 0.95f),
-                PanelColumn("Text size", sizes, weight = 0.9f),
-            ),
-            focusColumn = 1,
+        return listOf(
+            PanelColumn("Audio", audio, weight = 1.15f),
+            PanelColumn("Subtitles", subtitleOptions, weight = 1.45f),
+            PanelColumn("Speed", speed, weight = 0.6f),
+            PanelColumn("Sleep timer", sleep, weight = 0.95f),
+            PanelColumn("Text size", sizes, weight = 0.9f),
         )
     }
 
+    /** From the phone remote: download the best-ranked English subtitle and switch to it. */
+    private fun downloadBestSubtitle() {
+        val query = subtitleQuery(ENGLISH)
+        lifecycleScope.launch {
+            val best = runCatching { subtitles.search(query).results.firstOrNull() }.getOrNull()
+                ?: return@launch toast("No subtitles found online")
+            runCatching { subtitles.download(best, query, fileId) }
+                .onSuccess { selectLocal(it); toast("Subtitle loaded") }
+                .onFailure { toast("Download failed: ${it.message}") }
+        }
+    }
+
+    /** An embedded or DFLIX subtitle track, rendered by the player. */
     private fun selectSubtitleTrack(group: Tracks.Group, index: Int) {
-        val format = group.getTrackFormat(index)
-        // Downloaded subtitles can be re-timed; embedded and DFLIX ones can't.
-        activeLocalSubtitle = store.savedSubtitles(fileId).firstOrNull { format.id?.contains(subtitleId(it)) == true }
+        side.clear()
+        activeLocalSubtitle = null
         subtitleOffsetMs = 0
+        store.autoSubtitles = true
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
             .build()
     }
 
+    /** Remembered, as on Netflix: the next video starts without subtitles too. */
+    private fun turnSubtitlesOff() {
+        side.clear()
+        activeLocalSubtitle = null
+        store.autoSubtitles = false
+        disableTextTrack()
+    }
+
+    private fun disableTextTrack() {
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+    }
+
     private fun applySubtitleScale() {
-        playerView.subtitleView?.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * store.subtitleScale)
+        val size = SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * store.subtitleScale
+        playerView.subtitleView?.setFractionalTextSize(size)
+        sideView.setFractionalTextSize(size)
     }
 
 
@@ -651,11 +671,16 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    /** A downloaded subtitle: drawn over the video straight away, with no reload. */
     private fun selectLocal(sub: SavedSubtitle) {
+        if (!side.load(File(sub.path))) {
+            toast("Couldn't read that subtitle file")
+            return
+        }
         activeLocalSubtitle = sub
         subtitleOffsetMs = 0
-        pendingSubtitleId = subtitleId(sub)
-        reloadKeepingPosition()
+        store.autoSubtitles = true
+        disableTextTrack()
     }
 
     private fun showSyncDialog() {
@@ -670,8 +695,7 @@ class PlayerActivity : ComponentActivity() {
             lifecycleScope.launch {
                 subtitles.shift(sub, steps[index])
                 subtitleOffsetMs += steps[index]
-                pendingSubtitleId = subtitleId(sub)
-                reloadKeepingPosition()
+                side.load(File(sub.path))
                 showSyncDialog()
             }
         }
@@ -753,8 +777,14 @@ class PlayerActivity : ComponentActivity() {
         if (wasInPip) finish()
     }
 
+    private fun readPhoneChoices(intent: Intent) {
+        audioOverride = intent.getStringExtra(EXTRA_AUDIO)
+        subtitlesOverride = intent.getStringExtra(EXTRA_SUBTITLES)?.let { it == "on" }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        side.clear()
         NowPlaying.status = CastStatus()
         dialog?.dismiss()
         unregisterReceiver(pipReceiver)
@@ -769,6 +799,7 @@ class PlayerActivity : ComponentActivity() {
         if (newTitle != titleId) details = null
         titleId = newTitle
         startOverrideMs = intent.getLongExtra(EXTRA_START_MS, -1).takeIf { it >= 0 }
+        readPhoneChoices(intent)
         load(intent.getLongExtra(EXTRA_FILE_ID, fileId), resume = true)
     }
 
@@ -785,6 +816,15 @@ class PlayerActivity : ComponentActivity() {
                 PIP_BACK -> player.seekBack()
                 PIP_FORWARD -> player.seekForward()
                 CONTROL_STOP -> finish()
+                CONTROL_NEXT -> playNext()
+                CONTROL_SEEK -> player.seekTo(intent.getLongExtra(EXTRA_VALUE, player.currentPosition))
+                CONTROL_PICK -> {
+                    // Options are matched by column and label, so a list that changed meanwhile can't pick the wrong one.
+                    val column = intent.getStringExtra(EXTRA_COLUMN)
+                    val label = intent.getStringExtra(EXTRA_LABEL)
+                    optionColumns().firstOrNull { it.title == column }?.options
+                        ?.firstOrNull { it.label == label && it.shown != Shown.TV_ONLY }?.onPick?.invoke()
+                }
             }
             publishNowPlaying()
         }
@@ -869,23 +909,36 @@ class PlayerActivity : ComponentActivity() {
         private const val PIP_FORWARD = 3
         private const val EXTRA_FILE_ID = "file_id"
         private const val EXTRA_START_MS = "start_ms"
+        private const val EXTRA_AUDIO = "audio"
+        private const val EXTRA_SUBTITLES = "subtitles"
 
         // Remote-control actions, shared with the PiP buttons.
         const val CONTROL_TOGGLE = PIP_PLAY_PAUSE
         const val CONTROL_BACK = PIP_BACK
         const val CONTROL_FORWARD = PIP_FORWARD
         const val CONTROL_STOP = 4
+        const val CONTROL_NEXT = 5
+        const val CONTROL_SEEK = 6
+        const val CONTROL_PICK = 7
+        const val EXTRA_VALUE = "value"
+        const val EXTRA_COLUMN = "column"
+        const val EXTRA_LABEL = "label"
 
         fun controlIntent(context: Context, action: Int): Intent =
             Intent(ACTION_PIP_CONTROL).setPackage(context.packageName).putExtra(EXTRA_PIP_ACTION, action)
 
-        /** [startMs] overrides the saved resume position (used by "Play on TV"). */
-        fun start(context: Context, titleId: Long, fileId: Long, startMs: Long? = null) {
+        /**
+         * [startMs] overrides the saved resume position; [audio] (a language or "original") and
+         * [subtitlesOn] carry the phone's choices for "Play on TV".
+         */
+        fun start(context: Context, titleId: Long, fileId: Long, startMs: Long? = null, audio: String? = null, subtitlesOn: Boolean? = null) {
             context.startActivity(
                 Intent(context, PlayerActivity::class.java)
                     .putExtra(EXTRA_TITLE_ID, titleId)
                     .putExtra(EXTRA_FILE_ID, fileId)
                     .apply { startMs?.let { putExtra(EXTRA_START_MS, it) } }
+                    .apply { audio?.let { putExtra(EXTRA_AUDIO, it) } }
+                    .apply { subtitlesOn?.let { putExtra(EXTRA_SUBTITLES, if (it) "on" else "off") } }
                     .apply { if (context !is android.app.Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
             )
         }

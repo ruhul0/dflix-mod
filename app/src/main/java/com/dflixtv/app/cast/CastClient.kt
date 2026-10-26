@@ -42,6 +42,9 @@ object CastClient {
     /** The TV we last sent something to; the remote controls this one. */
     var active by mutableStateOf<CastTarget?>(null)
 
+    /** What the TV is playing, kept current by [CastControlService]; null when nothing is. */
+    var nowPlaying by mutableStateOf<CastStatus?>(null)
+
     private var discovery: NsdManager.DiscoveryListener? = null
     private var appContext: Context? = null
     // Android resolves one service at a time; extra requests fail with FAILURE_ALREADY_ACTIVE.
@@ -123,6 +126,9 @@ object CastClient {
             put("title", titleId.toString())
             put("file", fileId.toString())
             positionMs?.takeIf { it > 0 }?.let { put("pos", it.toString()) }
+            // The phone's audio language and subtitles on/off carry over to the TV.
+            put("audio", DflixApp.store.audioLanguage)
+            put("subtitles", if (DflixApp.store.autoSubtitles) "on" else "off")
         })
         active = target
     }
@@ -151,9 +157,9 @@ object CastClient {
     /** On opening the app: catch up with every TV already known. */
     fun syncAll() = targets.forEach(::syncInBackground)
 
-    suspend fun control(action: String) {
+    suspend fun control(action: String, params: Map<String, String> = emptyMap()) {
         val target = active ?: return
-        post(target, "/control", mapOf("action" to action))
+        post(target, "/control", mapOf("action" to action) + params)
     }
 
     suspend fun status(): CastStatus? {

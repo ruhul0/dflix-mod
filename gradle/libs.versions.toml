@@ -16,6 +16,7 @@ tvprovider = "1.1.0"
 zxing = "3.5.4"
 junit = "4.13.2"
 sentry = "8.60.0"
+androidxMedia = "1.7.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -39,6 +40,7 @@ androidx-tvprovider = { module = "androidx.tvprovider:tvprovider", version.ref =
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 junit = { module = "junit:junit", version.ref = "junit" }
 sentry-android = { module = "io.sentry:sentry-android", version.ref = "sentry" }
+androidx-media = { module = "androidx.media:media", version.ref = "androidxMedia" }
 coil-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 
 [plugins]

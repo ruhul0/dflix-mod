@@ -111,5 +111,6 @@ dependencies {
     implementation(libs.androidx.tvprovider)
     implementation(libs.zxing.core)
     implementation(libs.sentry.android)
+    implementation(libs.androidx.media)
     testImplementation(libs.junit)
 }

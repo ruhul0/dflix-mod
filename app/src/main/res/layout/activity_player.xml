@@ -13,6 +13,12 @@
         app:show_buffering="always"
         app:show_subtitle_button="false" />
 
+    <!-- Downloaded subtitles, drawn by SideSubtitles so switching never reloads the video. -->
+    <androidx.media3.ui.SubtitleView
+        android:id="@+id/side_subtitles"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <!-- Phone gesture feedback: "« 10s", brightness and volume levels. -->
     <TextView
         android:id="@+id/gesture_hint"

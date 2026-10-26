@@ -118,6 +118,11 @@ class MainActivity : ComponentActivity() {
 
     /** A "Continue watching" pick on the TV home screen opens the player directly. */
     private fun handlePlayIntent(intent: Intent) {
+        if (intent.getBooleanExtra(EXTRA_OPEN_REMOTE, false)) {
+            intent.removeExtra(EXTRA_OPEN_REMOTE)
+            CastUi.showRemote = true
+            return
+        }
         val titleId = intent.getLongExtra(EXTRA_PLAY_TITLE, 0)
         val fileId = intent.getLongExtra(EXTRA_PLAY_FILE, 0)
         if (titleId == 0L || fileId == 0L) return
@@ -128,6 +133,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_PLAY_TITLE = "play_title"
         private const val EXTRA_PLAY_FILE = "play_file"
+        /** From the "Playing on TV" notification. */
+        const val EXTRA_OPEN_REMOTE = "open_remote"
 
         fun playIntent(context: Context, titleId: Long, fileId: Long): Intent =
             Intent(context, MainActivity::class.java)
@@ -186,6 +193,9 @@ private fun App() {
                 is Screen.Details -> DetailsScreen(current.titleId, open)
             }
         }
+    }
+    if (!LocalIsTv.current) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) { MiniCastBar() }
     }
     CastOverlay()
 }
