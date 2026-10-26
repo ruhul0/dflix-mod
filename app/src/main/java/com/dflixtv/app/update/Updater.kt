@@ -82,7 +82,7 @@ object Updater {
     }
 
     /** Release notes come from commit messages wrapped at 72 columns; rejoin lines within paragraphs. */
-    private fun unwrap(text: String): String =
+    internal fun unwrap(text: String): String =
         text.replace("\r\n", "\n").split(Regex("\n{2,}")).joinToString("\n\n") { it.trim().replace(Regex("\\s*\n\\s*"), " ") }
 
     private fun download(activity: Activity, update: Update) {

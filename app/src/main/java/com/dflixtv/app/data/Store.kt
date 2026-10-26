@@ -93,6 +93,22 @@ class Store(context: Context) {
 
     // endregion
 
+    // region Recent searches
+
+    fun recentSearches(): List<String> =
+        runCatching { json.decodeFromString<List<String>>(prefs.getString("recent_searches", "[]")!!) }.getOrDefault(emptyList())
+
+    /** Most recent first, case-insensitively de-duplicated, at most 8. */
+    fun addRecentSearch(query: String) {
+        val q = query.trim().takeIf { it.length >= 2 } ?: return
+        val list = (listOf(q) + recentSearches().filterNot { it.equals(q, ignoreCase = true) }).take(8)
+        prefs.edit { putString("recent_searches", json.encodeToString(list)) }
+    }
+
+    fun clearRecentSearches() = prefs.edit { remove("recent_searches") }
+
+    // endregion
+
     // region AI suggestions
 
     var aiForYou: AiSuggest.Cached?

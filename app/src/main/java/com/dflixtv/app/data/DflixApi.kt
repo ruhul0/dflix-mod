@@ -65,7 +65,7 @@ object DflixApi {
         return json.decodeFromString<TitleDetails>(obj) to parseRows(text)
     }
 
-    private fun parseRows(text: String): List<HomeRow> =
+    internal fun parseRows(text: String): List<HomeRow> =
         Rsc.valuesAfter(text, ROW_REGEX).mapNotNull { (m, arr) ->
             runCatching { HomeRow(m.groupValues[1], json.decodeFromString<List<TitleSummary>>(arr)) }.getOrNull()
         }.filter { it.titles.isNotEmpty() }.distinctBy { it.label }

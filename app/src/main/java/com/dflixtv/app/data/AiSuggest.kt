@@ -85,7 +85,7 @@ object AiSuggest {
             exclude = emptySet(),
         )
         // "Movies like Interstellar" shouldn't answer with Interstellar.
-        val reference = SIMILAR_TO.find(request)?.groupValues?.get(1)?.let(::normalize)
+        val reference = referencedTitle(request)?.let(::normalize)
         return picks.filterNot { reference != null && normalize(it.title) == reference }
     }
 
@@ -126,10 +126,7 @@ object AiSuggest {
 
     /** Finds each suggested "Title (Year)" in the library; unmatched suggestions are dropped. */
     private suspend fun resolve(lines: List<String>, exclude: Set<Long>): List<TitleSummary> = coroutineScope {
-        val picks = lines.mapNotNull { line ->
-            LINE.find(line.trim())?.let { m -> m.groupValues[1].trim() to m.groupValues[2].toIntOrNull() }
-                ?.takeIf { it.first.length > 1 }
-        }.distinctBy { normalize(it.first) }.take(30)
+        val picks = parseTitles(lines)
         val limit = Semaphore(6)
         picks.map { (title, year) ->
             async {
@@ -144,7 +141,17 @@ object AiSuggest {
 
     private val SIMILAR_TO = Regex("""(?i)\b(?:like|similar to|such as)\s+(.+?)\s*$""")
 
-    private fun normalize(title: String) = title.lowercase().filter { it.isLetterOrDigit() }
+    /** "1. Title (2014)", "- **Title** (2014) - note" … → title and year, de-duplicated, at most 30. */
+    internal fun parseTitles(lines: List<String>): List<Pair<String, Int?>> =
+        lines.mapNotNull { line ->
+            LINE.find(line.trim())?.let { m -> m.groupValues[1].trim() to m.groupValues[2].toIntOrNull() }
+                ?.takeIf { it.first.length > 1 }
+        }.distinctBy { normalize(it.first) }.take(30)
+
+    /** The title a request compares against: "movies like Interstellar" → "Interstellar". */
+    internal fun referencedTitle(request: String): String? = SIMILAR_TO.find(request)?.groupValues?.get(1)
+
+    internal fun normalize(title: String) = title.lowercase().filter { it.isLetterOrDigit() }
 
     // "1. Title (2014)", "- Title (2014)", "Title (2014) – note"; the year is optional.
     // A note is only cut off after a spaced dash, so "Spider-Man: No Way Home" stays whole.

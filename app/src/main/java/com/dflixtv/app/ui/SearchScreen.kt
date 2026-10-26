@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -44,6 +45,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.dflixtv.app.DflixApp
 import com.dflixtv.app.data.AiSuggest
 import com.dflixtv.app.data.DflixApi
 import com.dflixtv.app.data.TitleSummary
@@ -65,8 +67,23 @@ class SearchViewModel : ViewModel() {
         private set
     private var job: Job? = null
 
+    var recent by mutableStateOf(DflixApp.store.recentSearches())
+        private set
+
+    /** Remembers the query once it led somewhere: a result was opened or the AI was asked. */
+    fun rememberQuery() {
+        DflixApp.store.addRecentSearch(query)
+        recent = DflixApp.store.recentSearches()
+    }
+
+    fun clearRecent() {
+        DflixApp.store.clearRecentSearches()
+        recent = emptyList()
+    }
+
     fun askAi() {
         val text = query.trim().takeIf { it.isNotEmpty() } ?: return
+        rememberQuery()
         job?.cancel()
         aiMode = true
         aiError = null
@@ -188,7 +205,9 @@ fun SearchScreen(open: (Long) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                items(vm.results, key = { it.id }) { t -> PosterCard(t, onClick = { open(t.id) }, width = if (LocalIsTv.current) 150.dp else 105.dp) }
+                items(vm.results, key = { it.id }) { t ->
+                    PosterCard(t, onClick = { vm.rememberQuery(); open(t.id) }, width = if (LocalIsTv.current) 150.dp else 105.dp)
+                }
             }
             vm.searching -> CenterMessage(if (vm.aiMode) "Asking AI… this can take up to a minute" else "Searching…")
             vm.aiError != null -> RetryMessage("AI suggestions failed: ${vm.aiError}", vm::askAi)
@@ -196,6 +215,13 @@ fun SearchScreen(open: (Long) -> Unit) {
             vm.query.isNotBlank() -> CenterMessage(
                 if (AiSuggest.isAvailable) "No results for \"${vm.query}\". Try ✨ Ask AI." else "No results for \"${vm.query}\""
             )
+            vm.recent.isNotEmpty() -> Column(Modifier.padding(top = 8.dp)) {
+                SectionLabel("Recent searches")
+                PillRow {
+                    items(vm.recent) { q -> Pill(q, selected = false, onClick = { vm.onQuery(q) }) }
+                    item { Pill("Clear", selected = false, onClick = vm::clearRecent) }
+                }
+            }
             else -> CenterMessage("Type to search the DFLIX library")
         }
     }

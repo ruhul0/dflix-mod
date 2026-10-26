@@ -191,6 +191,7 @@ private fun MainScreen(open: (Long) -> Unit) {
     var selected by rememberSaveable { mutableIntStateOf(0) }
     val tabs = Tab.entries
     val firstTab = remember { FocusRequester() }
+    val searchTab = remember { FocusRequester() }
     val content = remember { FocusRequester() }
     val isTv = LocalIsTv.current
     val focusMemory = LocalFocusMemory.current
@@ -215,7 +216,10 @@ private fun MainScreen(open: (Long) -> Unit) {
     val solidHeader = tab != Tab.Home || scrolled
 
     LaunchedEffect(VoiceSearchRequests.pending) {
-        if (VoiceSearchRequests.pending) selected = Tab.Search.ordinal
+        if (!VoiceSearchRequests.pending) return@LaunchedEffect
+        selected = Tab.Search.ordinal
+        // Move the focus box along, so it isn't left on the tab we came from.
+        if (isTv) runCatching { searchTab.requestFocus() }
     }
 
     // Like Netflix, Back from another tab returns to Home before leaving the app.
@@ -275,7 +279,11 @@ private fun MainScreen(open: (Long) -> Unit) {
                         t.label,
                         selected = index == selected,
                         onClick = { selected = index },
-                        modifier = (if (index == 0) Modifier.focusRequester(firstTab) else Modifier)
+                        modifier = when (t) {
+                            Tab.Home -> Modifier.focusRequester(firstTab)
+                            Tab.Search -> Modifier.focusRequester(searchTab)
+                            else -> Modifier
+                        }
                             .focusProperties { down = content },
                     )
                 }

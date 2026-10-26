@@ -16,6 +16,8 @@ next=$(( ${last:-0} + 1 ))
 tag="v1.0.$next"
 echo "Building $tag"
 
+# Parsing tests first: a dflix.live or subtitle-site change shouldn't ship silently.
+./gradlew -q testSideloadDebugUnitTest
 BUILD_NUMBER=$next ./gradlew -q assembleSideloadRelease bundlePlayRelease
 
 mkdir -p dist
