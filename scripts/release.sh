@@ -24,11 +24,21 @@ mkdir -p dist
 cp app/build/outputs/apk/sideload/release/app-sideload-release.apk dist/dflix-tv.apk
 cp app/build/outputs/bundle/playRelease/app-play-release.aab dist/dflix-tv-play.aab
 
+# Default notes: the last commit's message, or every commit's subject when several went in.
+notes() {
+  local range="v1.0.$last..HEAD"
+  if [[ -z "$last" || "$(git rev-list --count "$range")" -le 1 ]]; then
+    git log -1 --pretty=%B
+  else
+    git log "$range" --reverse --pretty='- %s'
+  fi
+}
+
 git push -q origin main
 # Fixed asset names keep .../releases/latest/download/dflix-tv.apk stable for manual installs.
 gh release create "$tag" dist/dflix-tv.apk dist/dflix-tv-play.aab \
   --title "DFLIX TV $tag" \
-  --notes "${1:-$(git log -1 --pretty=%B)}" \
+  --notes "${1:-$(notes)}" \
   --target "$(git rev-parse HEAD)"
 
 echo "Released $tag. Play bundle: dist/dflix-tv-play.aab"
