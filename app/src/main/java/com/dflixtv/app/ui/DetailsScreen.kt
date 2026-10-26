@@ -55,6 +55,7 @@ import com.dflixtv.app.DflixApp
 import com.dflixtv.app.data.ContinueEntry
 import com.dflixtv.app.data.DflixApi
 import com.dflixtv.app.data.HomeRow
+import com.dflixtv.app.data.NewEpisodes
 import com.dflixtv.app.data.MediaFile
 import com.dflixtv.app.data.TitleDetails
 import com.dflixtv.app.player.PlayerActivity
@@ -101,6 +102,9 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
     var resumeTick by remember { mutableIntStateOf(0) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { resumeTick++ }
 
+    // Opening a show counts as having seen its new episodes.
+    LaunchedEffect(details) { if (details.isShow) NewEpisodes.markSeen(titleId, details.files.size) }
+
     val seasons = details.seasons
     val seasonKeys = seasons.keys.toList()
     var seasonIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -142,10 +146,13 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
                 Box(Modifier.fillMaxWidth().height((LocalConfiguration.current.screenHeightDp * 0.78f).dp)) {
                     Backdrop(details.backdropUrl, Modifier.fillMaxSize())
                     Column(
-                        Modifier.align(Alignment.BottomStart).padding(start = gutter(), bottom = 24.dp).fillMaxWidth(0.5f),
+                        Modifier.align(Alignment.BottomStart).padding(start = gutter(), bottom = 24.dp).fillMaxWidth(0.9f),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        DetailsInfo(details, isTv = true)
+                        // Text stays in the left half over the backdrop; the buttons may run wider.
+                        Column(Modifier.fillMaxWidth(0.55f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            DetailsInfo(details, isTv = true)
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 6.dp)) {
                             playFile?.let { file ->
                                 NetflixButton(
@@ -163,6 +170,7 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
                                 }, icon = "↺")
                             }
                             NetflixButton("My List", onClick = toggleList, icon = if (inList) "✓" else "+")
+                            details.trailerKey?.let { key -> NetflixButton("Trailer", onClick = { openTrailer(context, key) }, icon = "🎬") }
                         }
                         VersionChips(details, play)
                     }
@@ -193,6 +201,7 @@ fun DetailsScreen(titleId: Long, open: (Long) -> Unit) {
                         VersionChips(details, play)
                         Row(horizontalArrangement = Arrangement.spacedBy(28.dp), modifier = Modifier.padding(vertical = 4.dp)) {
                             IconAction(if (inList) "✓" else "+", "My List", toggleList)
+                            details.trailerKey?.let { key -> IconAction("🎬", "Trailer") { openTrailer(context, key) } }
                         }
                     }
                 }

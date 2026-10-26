@@ -50,6 +50,7 @@ import com.dflixtv.app.data.AiSuggest
 import com.dflixtv.app.data.ContinueEntry
 import com.dflixtv.app.data.DflixApi
 import com.dflixtv.app.data.HomeRow
+import com.dflixtv.app.data.NewEpisodes
 import com.dflixtv.app.data.TitleSummary
 import com.dflixtv.app.player.PlayerActivity
 import kotlinx.coroutines.Job
@@ -112,6 +113,7 @@ class HomeViewModel : ViewModel() {
     fun refreshLocal() {
         continueWatching = DflixApp.store.continueWatching()
         myList = DflixApp.store.myList()
+        viewModelScope.launch { runCatching { NewEpisodes.checkIfDue() } }
         // AI picks refresh in the background when the viewer's history changed or once a day.
         if (picksJob?.isActive != true) {
             picksJob = viewModelScope.launch {
@@ -223,6 +225,9 @@ private fun TvBillboard(title: TitleSummary, topInset: Dp, onInfo: () -> Unit, o
                     icon = if (inList) "✓" else "+",
                     memoryKey = "hero/list",
                 )
+                title.trailerKey?.let { key ->
+                    NetflixButton("Trailer", onClick = { openTrailer(context, key) }, icon = "🎬", memoryKey = "hero/trailer")
+                }
             }
         }
     }
@@ -338,6 +343,7 @@ private fun ContinueRow(entries: List<ContinueEntry>, onClick: (ContinueEntry) -
                                 .padding(horizontal = 14.dp, vertical = 6.dp),
                         )
                         ProgressBar(entry.progress, Modifier.fillMaxWidth().align(Alignment.BottomStart))
+                        if (entry.titleId in NewEpisodes.ids) NewEpisodesTag(Modifier.align(Alignment.TopCenter))
                     }
                     Text(
                         listOfNotNull(entry.title, entry.subtitle?.substringBefore(" · ")).joinToString(" · "),

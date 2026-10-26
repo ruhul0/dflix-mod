@@ -17,6 +17,7 @@ data class TitleSummary(
     val runtime: Int? = null,
     val overview: String? = null,
     val quality: String? = null,
+    val trailerKey: String? = null,
 ) {
     val isShow: Boolean get() = kind == "tv"
     val posterUrl: String? get() = DflixApi.imageUrl("poster", posterPath)
@@ -86,6 +87,8 @@ data class TitleDetails(
     val tagline: String? = null,
     val certification: String? = null,
     val originalLanguage: String? = null,
+    /** YouTube video id of the trailer. */
+    val trailerKey: String? = null,
     val files: List<MediaFile> = emptyList(),
 ) {
     val isShow: Boolean get() = kind == "tv"

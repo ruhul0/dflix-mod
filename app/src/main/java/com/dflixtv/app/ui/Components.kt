@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.dflixtv.app.DflixApp
 import com.dflixtv.app.data.DflixApi
+import com.dflixtv.app.data.NewEpisodes
 import com.dflixtv.app.data.TitleSummary
 import com.dflixtv.app.player.PlayerActivity
 
@@ -257,7 +258,21 @@ fun PosterCard(
         if (title.posterUrl == null) {
             Text(title.title, Modifier.align(Alignment.Center).padding(8.dp), style = MaterialTheme.typography.labelLarge)
         }
+        if (title.id in NewEpisodes.ids) NewEpisodesTag(Modifier.align(Alignment.BottomCenter))
     }
+}
+
+/** Netflix's red "New Episodes" strip along the bottom of a poster. */
+@Composable
+fun NewEpisodesTag(modifier: Modifier = Modifier) {
+    Text(
+        "NEW EPISODES",
+        color = Color.White,
+        fontSize = if (LocalIsTv.current) 11.sp else 9.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.5.sp,
+        modifier = modifier.background(Brand, RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }
 
 /** Landscape backdrop tile with the title over a bottom fade (Netflix TV rows). */
@@ -441,6 +456,15 @@ fun Badge(text: String) {
             .border(1.dp, Dim, RoundedCornerShape(2.dp))
             .padding(horizontal = 5.dp, vertical = 1.dp),
     )
+}
+
+/** Plays a YouTube trailer in the YouTube app (TV or phone), falling back to any browser. */
+fun openTrailer(context: Context, key: String) {
+    val app = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("vnd.youtube:$key"))
+    val web = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/watch?v=$key"))
+    runCatching { context.startActivity(app) }
+        .recoverCatching { context.startActivity(web) }
+        .onFailure { Toast.makeText(context, "Install YouTube to watch trailers", Toast.LENGTH_LONG).show() }
 }
 
 /**

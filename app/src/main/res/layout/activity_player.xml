@@ -13,6 +13,22 @@
         app:show_buffering="always"
         app:show_subtitle_button="false" />
 
+    <!-- Phone gesture feedback: "« 10s", brightness and volume levels. -->
+    <TextView
+        android:id="@+id/gesture_hint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="#99000000"
+        android:paddingStart="20dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="10dp"
+        android:textColor="#FFFFFF"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
     <ProgressBar
         android:id="@+id/loading"
         android:layout_width="64dp"

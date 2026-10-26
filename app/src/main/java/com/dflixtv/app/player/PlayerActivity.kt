@@ -18,6 +18,13 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.annotation.SuppressLint
+import android.media.AudioManager
+import android.provider.Settings
+import android.view.GestureDetector
+import android.view.MotionEvent
+import com.dflixtv.app.ui.isTv
+import kotlin.math.roundToInt
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
@@ -53,6 +60,7 @@ import com.dflixtv.app.R
 import com.dflixtv.app.data.ContinueEntry
 import com.dflixtv.app.data.DflixApi
 import com.dflixtv.app.data.MediaFile
+import com.dflixtv.app.data.NewEpisodes
 import com.dflixtv.app.data.SavedSubtitle
 import com.dflixtv.app.data.TitleDetails
 import com.dflixtv.app.data.WatchInfo
@@ -99,6 +107,8 @@ class PlayerActivity : ComponentActivity() {
     private var dialog: Dialog? = null
     private var networkRetries = 0
     private var startOverrideMs: Long? = null
+    private lateinit var gestureHint: TextView
+    private var hideHint: Runnable? = null
     /** Sleep timer: stop at this elapsed-realtime, or when the current episode ends. */
     private var sleepAtElapsed: Long? = null
     private var sleepAfterEpisode = false
@@ -152,6 +162,8 @@ class PlayerActivity : ComponentActivity() {
             )
         })
         playerView.requestFocus()
+        gestureHint = findViewById(R.id.gesture_hint)
+        if (!isTv()) setUpTouchGestures()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -279,6 +291,7 @@ class PlayerActivity : ComponentActivity() {
             val watchJob = async { runCatching { DflixApi.watchInfo(titleId, loadingFileId) }.getOrNull() }
             details = detailsJob.await()
             watchInfo = watchJob.await()
+            details?.takeIf { it.isShow }?.let { NewEpisodes.markSeen(titleId, it.files.size) }
             if (loadingFileId != fileId) return@launch
             applyAudioPreference()
             updateHeader()
@@ -865,6 +878,81 @@ class PlayerActivity : ComponentActivity() {
         startOverrideMs = intent.getLongExtra(EXTRA_START_MS, -1).takeIf { it >= 0 }
         load(intent.getLongExtra(EXTRA_FILE_ID, fileId), resume = true)
     }
+
+    // region Phone gestures
+
+    /**
+     * YouTube-style touch controls on phones: double-tap a side to skip 10 s, drag up/down on the
+     * left for brightness and on the right for volume. Taps on the player's own buttons never get
+     * here, because PlayerView only passes on touches its children didn't consume.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setUpTouchGestures() {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val maxVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        var adjusting: String? = null // "brightness" or "volume" while a vertical drag is in progress
+        var startLevel = 0f
+
+        val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean {
+                adjusting = null
+                return true
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (playerView.isControllerFullyVisible) playerView.hideController() else playerView.showController()
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                if (e.x < playerView.width / 2f) {
+                    player.seekBack()
+                    showHint("« 10s")
+                } else {
+                    player.seekForward()
+                    showHint("10s »")
+                }
+                return true
+            }
+
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+                val start = e1 ?: return false
+                val dy = start.y - e2.y
+                if (adjusting == null) {
+                    // Only clearly vertical drags adjust; anything else is left alone.
+                    if (kotlin.math.abs(dy) < 24 || kotlin.math.abs(dy) < kotlin.math.abs(e2.x - start.x)) return false
+                    adjusting = if (start.x < playerView.width / 2f) "brightness" else "volume"
+                    startLevel = if (adjusting == "brightness") currentBrightness()
+                    else audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume
+                }
+                // A full-height drag covers the whole range.
+                val level = (startLevel + dy / playerView.height).coerceIn(0f, 1f)
+                if (adjusting == "brightness") {
+                    window.attributes = window.attributes.apply { screenBrightness = level.coerceAtLeast(0.01f) }
+                    showHint("☀ ${(level * 100).toInt()}%")
+                } else {
+                    val volume = (level * maxVolume).roundToInt()
+                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                    showHint("🔊 ${volume * 100 / maxVolume}%")
+                }
+                return true
+            }
+        })
+        playerView.setOnTouchListener { _, event -> detector.onTouchEvent(event) }
+    }
+
+    private fun currentBrightness(): Float =
+        window.attributes.screenBrightness.takeIf { it >= 0 }
+            ?: runCatching { Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f }.getOrDefault(0.5f)
+
+    private fun showHint(text: String) {
+        gestureHint.text = text
+        gestureHint.visibility = View.VISIBLE
+        hideHint?.let(gestureHint::removeCallbacks)
+        hideHint = Runnable { gestureHint.visibility = View.GONE }.also { gestureHint.postDelayed(it, 700) }
+    }
+
+    // endregion
 
     // region Picture-in-picture
 
