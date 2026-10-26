@@ -16,6 +16,10 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import io.sentry.Attachment
+import io.sentry.Sentry
+import io.sentry.SentryLevel
+import io.sentry.protocol.SentryId
 
 /** One line of the Diagnostics report: ok true/false, or null for information only. */
 data class Check(val name: String, val ok: Boolean?, val detail: String)
@@ -88,25 +92,17 @@ object Diagnostics {
     }
 
     /**
-     * A pre-filled "New issue" link on this app's GitHub repo. Nothing is posted until the viewer
-     * presses Submit, so the app needs no GitHub credentials. [maxBody] keeps it short enough for
-     * a QR code on TV.
+     * Sends the report to the developer through Sentry, with the full text attached. Returns a
+     * short reference to quote, or null when sending failed.
      */
-    fun issueUrl(checks: List<Check>, maxBody: Int): String {
-        val crash = CrashLog.crashes().firstOrNull()
-        val title = crash?.lines()?.drop(2)?.firstOrNull { it.isNotBlank() }?.trim()?.take(90)?.let { "Crash: $it" }
-            ?: "Bug report"
-        val body = buildString {
-            appendLine("**What happened?** (please describe)")
-            appendLine()
-            appendLine("```")
-            append(report(checks).take(maxBody))
-            appendLine("```")
+    fun sendToDeveloper(checks: List<Check>): String? {
+        val report = report(checks)
+        val id = Sentry.captureMessage("Bug report from ${Build.MODEL}", SentryLevel.INFO) { scope ->
+            scope.addAttachment(Attachment(report.toByteArray(), "report.txt", "text/plain"))
+            scope.setTag("kind", "bug-report")
         }
-        return "https://github.com/${BuildConfig.UPDATE_REPO}/issues/new?title=${enc(title)}&body=${enc(body)}"
+        return id.toString().takeIf { id != SentryId.EMPTY_ID }?.take(8)
     }
-
-    private fun enc(text: String) = java.net.URLEncoder.encode(text, "UTF-8").replace("+", "%20")
 
     /** Plain-text report for sending to a phone or chat. */
     fun report(checks: List<Check>): String = buildString {

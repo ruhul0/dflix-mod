@@ -5,6 +5,7 @@ import android.app.Application
 import android.os.Bundle
 import com.dflixtv.app.cast.CastServer
 import com.dflixtv.app.diag.CrashLog
+import io.sentry.android.core.SentryAndroid
 import com.dflixtv.app.ui.isTv
 import coil3.ImageLoader
 import coil3.PlatformContext
@@ -20,6 +21,14 @@ class DflixApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Sentry first: CrashLog records a crash, then hands it on to Sentry's handler.
+        SentryAndroid.init(this) { options ->
+            options.dsn = BuildConfig.SENTRY_DSN
+            options.release = "dflix-tv@${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}"
+            options.environment = if (BuildConfig.DEBUG) "debug" else BuildConfig.FLAVOR
+            options.isSendDefaultPii = false
+            options.setTag("device", if (isTv()) "tv" else "phone")
+        }
         CrashLog.install(this)
         store = Store(this)
         // Tracks whether any screen is showing: Android only lets the TV open the player for a

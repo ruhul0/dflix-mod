@@ -19,6 +19,12 @@ android {
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
         buildConfigField("String", "UPDATE_REPO", "\"ruhul0/dflix-mod\"")
+        // Crash and bug reports. A Sentry DSN is public by design: it can only submit events.
+        buildConfigField(
+            "String",
+            "SENTRY_DSN",
+            "\"https://e237c06c29eb18bfc80015017743219f@o4511484478357504.ingest.de.sentry.io/4512322761457744\"",
+        )
         // AI suggestions: the OpenRouter key comes from local.properties (openrouter.key), never from git.
         val localProps = Properties().apply {
             rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
@@ -104,5 +110,6 @@ dependencies {
     implementation(libs.coil.okhttp)
     implementation(libs.androidx.tvprovider)
     implementation(libs.zxing.core)
+    implementation(libs.sentry.android)
     testImplementation(libs.junit)
 }

@@ -22,6 +22,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.DflixTV"
         android:usesCleartextTraffic="true">
+        <!-- Sentry starts from DflixApp, with our options. -->
+        <meta-data android:name="io.sentry.auto-init" android:value="false" />
         <!-- Cleartext is for "Play on TV": phone and TV talk plain HTTP on the local Wi-Fi.
              Every internet service the app uses is HTTPS. -->
 

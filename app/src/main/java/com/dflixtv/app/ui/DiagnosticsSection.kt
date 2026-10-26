@@ -50,7 +50,7 @@ fun DiagnosticsSection() {
     var running by remember { mutableStateOf(false) }
     var lastCrash by remember { mutableStateOf(CrashLog.lastSummary()) }
     var sharing by remember { mutableStateOf<String?>(null) }
-    var reportUrl by remember { mutableStateOf<String?>(null) }
+    var reported by remember { mutableStateOf<String?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Diagnostics", color = Color.White, fontSize = if (isTv) 20.sp else 17.sp, fontWeight = FontWeight.Medium)
@@ -85,7 +85,7 @@ fun DiagnosticsSection() {
                     running = false
                 }
             }, icon = "🩺")
-            NetflixButton("Send report", onClick = {
+            NetflixButton("Send to phone", onClick = {
                 scope.launch {
                     val report = Diagnostics.report(checks ?: Diagnostics.run(context).also { checks = it })
                     if (isTv) {
@@ -100,16 +100,16 @@ fun DiagnosticsSection() {
                     }
                 }
             }, icon = "📤")
-            NetflixButton("Report bug on GitHub", onClick = {
+            NetflixButton(if (reported != null) "Sent ✓" else "Send bug report", onClick = {
                 scope.launch {
                     val results = checks ?: Diagnostics.run(context).also { checks = it }
-                    if (isTv) {
-                        // A QR code only holds so much: the TV sends a shorter report.
-                        reportUrl = Diagnostics.issueUrl(results, maxBody = 600)
-                    } else {
-                        val url = Diagnostics.issueUrl(results, maxBody = 6_000)
-                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
-                    }
+                    val ref = Diagnostics.sendToDeveloper(results)
+                    reported = ref ?: ""
+                    android.widget.Toast.makeText(
+                        context,
+                        if (ref != null) "Bug report sent (ref $ref). Thanks!" else "Couldn't send the report",
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
                 }
             }, icon = "🐞")
             if (lastCrash != null) {
@@ -118,38 +118,6 @@ fun DiagnosticsSection() {
         }
     }
     sharing?.let { text -> ShareTextDialog("Send report to your phone", text) { sharing = null } }
-    reportUrl?.let { url -> IssueQrDialog(url) { reportUrl = null } }
-}
-
-/** TV: a QR code of the pre-filled GitHub issue, to open and submit on a phone. */
-@Composable
-private fun IssueQrDialog(url: String, onDismiss: () -> Unit) {
-    val qr = remember(url) { qrBitmap(url, 640) }
-    val close = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { close.requestFocus() } }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().background(Color(0xE6000000)), contentAlignment = Alignment.Center) {
-            Row(
-                Modifier.background(Background, RoundedCornerShape(12.dp)).padding(32.dp),
-                horizontalArrangement = Arrangement.spacedBy(32.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Image(
-                    qr.asImageBitmap(),
-                    contentDescription = "QR code",
-                    filterQuality = FilterQuality.None,
-                    modifier = Modifier.size(300.dp).background(Color.White, RoundedCornerShape(8.dp)).padding(8.dp),
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Report bug on GitHub", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    Text("1. Scan with your phone (any network).", color = Dim, fontSize = 16.sp)
-                    Text("2. Sign in to GitHub, add what happened, tap Submit.", color = Dim, fontSize = 16.sp)
-                    Text("The report holds the app version, device, checks and the last crash.", color = Dim, fontSize = 14.sp)
-                    NetflixButton("Close", onClick = onDismiss, modifier = Modifier.padding(top = 8.dp).focusRequester(close))
-                }
-            }
-        }
-    }
 }
 
 /**
