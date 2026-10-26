@@ -11,7 +11,7 @@
         android:layout_height="match_parent"
         android:focusable="true"
         app:show_buffering="always"
-        app:show_subtitle_button="true" />
+        app:show_subtitle_button="false" />
 
     <ProgressBar
         android:id="@+id/loading"
@@ -46,14 +46,7 @@
             style="@style/PlayerButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Find subtitles" />
-
-        <Button
-            android:id="@+id/btn_sub_delay"
-            style="@style/PlayerButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Subtitle sync" />
+            android:text="Audio &amp; Subtitles" />
 
         <Button
             android:id="@+id/btn_pip"

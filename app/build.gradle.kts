@@ -14,8 +14,8 @@ android {
         applicationId = "com.dflixtv.app"
         minSdk = 24
         targetSdk = 36
-        // CI sets GITHUB_RUN_NUMBER so every pushed build is a higher version the in-app updater can detect.
-        val buildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        // scripts/release.sh sets BUILD_NUMBER so every release is a higher version the in-app updater can detect.
+        val buildNumber = (System.getenv("BUILD_NUMBER") ?: System.getenv("GITHUB_RUN_NUMBER"))?.toIntOrNull() ?: 1
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
         buildConfigField("String", "UPDATE_REPO", "\"ruhul0/dflix-mod\"")

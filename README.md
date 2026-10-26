@@ -32,34 +32,28 @@ There are two build flavors:
 | Flavor | Package | Updates | Output |
 |---|---|---|---|
 | `sideload` | `com.dflixtv.app` | GitHub self-updater | `dflix-tv.apk` on each release |
-| `play` | `com.dflixtv.app.play` | Google Play | `dflix-tv-play.aab` on each release, uploaded to the Play **internal testing** track |
+| `play` | `com.dflixtv.app.play` | Google Play | `dflix-tv-play.aab` on each release, uploaded by hand to the Play **internal testing** track |
 
-One-time Play setup:
-1. In Play Console create the app (TV, free). Upload the `dflix-tv-play.aab` from the latest GitHub release to **Testing → Internal testing** by hand. The API can't create an app, so the first upload has to be manual. Enroll in Play App Signing when asked; this repo's keystore becomes the upload key.
-2. Google Cloud Console: create a service account and a JSON key. Play Console → Users and permissions: invite the service account's email with release permissions for this app.
-3. Add the JSON as the repository secret `PLAY_SERVICE_ACCOUNT_JSON`. From then on, every push uploads to internal testing as a draft.
-4. After the first release is rolled out in Play Console, set the repository variable `PLAY_RELEASE_STATUS` to `completed` so new builds go straight to testers.
+## Releasing
 
-## How updates work
+Releases are built on your machine; GitHub only hosts them. With `gh` logged in and `keystore/keystore.properties` present:
 
-Every push to `main` runs `.github/workflows/release.yml`, which builds a signed APK and publishes the release `v1.0.<run number>`. The run number is also the app's `versionCode`, so installed apps see a newer build and prompt to update. On first update, Android asks you to allow installs from DFLIX TV.
+```sh
+scripts/release.sh                 # release notes = last commit message
+scripts/release.sh "What changed"  # custom notes
+```
 
-The workflow needs these repository secrets (they are already set for this repo):
+The script picks the next `v1.0.N` from the existing tags, builds the signed APK and Play bundle with that number as `versionCode`, pushes `main` and publishes the GitHub release with `dflix-tv.apk` and `dflix-tv-play.aab`. Installed sideload apps see the newer build and offer to update; on first update, Android asks you to allow installs from DFLIX TV.
 
-| Secret | Value |
-|---|---|
-| `KEYSTORE_BASE64` | `base64 -i keystore/release.jks` |
-| `SIGNING_STORE_PASSWORD` | store password |
-| `SIGNING_KEY_ALIAS` | `dflixtv` |
-| `SIGNING_KEY_PASSWORD` | key password |
+For Play, upload `dist/dflix-tv-play.aab` to **Testing → Internal testing** in Play Console.
 
 Keep `keystore/` backed up and out of git. If the key is lost, installed apps can't update and have to be uninstalled first.
 
 ## Build locally
 
 ```sh
-./gradlew assembleRelease      # needs keystore/keystore.properties
-adb install -r app/build/outputs/apk/release/app-release.apk
+./gradlew assembleSideloadRelease  # needs keystore/keystore.properties
+adb install -r app/build/outputs/apk/sideload/release/app-sideload-release.apk
 ```
 
 ## How it talks to dflix.live

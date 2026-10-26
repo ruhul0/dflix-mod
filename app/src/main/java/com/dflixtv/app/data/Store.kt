@@ -36,6 +36,11 @@ class Store(context: Context) {
         get() = prefs.getBoolean("auto_subs", true)
         set(value) = prefs.edit { putBoolean("auto_subs", value) }
 
+    /** Subtitle text size relative to the player default (1.0). */
+    var subtitleScale: Float
+        get() = prefs.getFloat("sub_scale", 1f)
+        set(value) = prefs.edit { putFloat("sub_scale", value) }
+
     var autoPlayNext: Boolean
         get() = prefs.getBoolean("autoplay_next", true)
         set(value) = prefs.edit { putBoolean("autoplay_next", value) }

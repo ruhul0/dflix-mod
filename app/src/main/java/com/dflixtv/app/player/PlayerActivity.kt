@@ -29,6 +29,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
@@ -45,6 +46,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import com.dflixtv.app.DflixApp
 import com.dflixtv.app.R
 import com.dflixtv.app.data.ContinueEntry
@@ -65,6 +67,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.Locale
 
 @UnstableApi
 class PlayerActivity : ComponentActivity() {
@@ -108,8 +111,7 @@ class PlayerActivity : ComponentActivity() {
         titleView = findViewById(R.id.title)
         nextButton = findViewById(R.id.btn_next)
         loading = findViewById(R.id.loading)
-        findViewById<Button>(R.id.btn_subtitles).setOnClickListener { showSubtitleMenu() }
-        findViewById<Button>(R.id.btn_sub_delay).setOnClickListener { showSyncDialog() }
+        findViewById<Button>(R.id.btn_subtitles).setOnClickListener { showAudioSubtitlePanel() }
         nextButton.setOnClickListener { playNext() }
         pipButton = findViewById(R.id.btn_pip)
         pipButton.visibility = if (pipSupported) View.VISIBLE else View.GONE
@@ -118,8 +120,15 @@ class PlayerActivity : ComponentActivity() {
 
         player = buildPlayer()
         playerView.player = player
+        // Audio, subtitles and speed all live in our own Audio & Subtitles panel.
+        playerView.findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.visibility = View.GONE
+        applySubtitleScale()
         playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
             topBar.visibility = visibility
+            // Lift subtitles above the seek bar while the controls are showing.
+            playerView.subtitleView?.setBottomPaddingFraction(
+                if (visibility == View.VISIBLE) 0.2f else SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION
+            )
         })
         playerView.requestFocus()
 
@@ -411,19 +420,143 @@ class PlayerActivity : ComponentActivity() {
         )
     }
 
-    private fun showSubtitleMenu() {
-        val language = Language.byCode3(store.subtitleLanguage)
-        val saved = store.savedSubtitles(fileId).filter { File(it.path).exists() }
-        val options = buildList {
-            add("Search online (${language.name})" to { searchSubtitles(language) })
-            add("Search in another language…" to { pickLanguageThenSearch() })
-            saved.reversed().forEach { sub -> add("Use saved: ${sub.label}" to { selectLocal(sub) }) }
-            add("Turn subtitles off" to {
+    /** Netflix-style panel: audio tracks, subtitle tracks, playback speed and subtitle size. */
+    private fun showAudioSubtitlePanel() {
+        dialog?.dismiss()
+        val tracks = player.currentTracks.groups
+        val original = details?.originalLanguage
+
+        val audioTracks = tracks.filter { it.type == C.TRACK_TYPE_AUDIO }
+            .flatMap { group -> (0 until group.length).filter { group.isTrackSupported(it) }.map { group to it } }
+        val audio = audioTracks.mapIndexed { position, (group, index) ->
+            val format = group.getTrackFormat(index)
+            val fallback = if (audioTracks.size == 1) "Original" else "Audio ${position + 1}"
+            PanelOption(audioLabel(format, original, fallback), group.isTrackSelected(index)) {
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
+                    .build()
+                // Remember the choice for the next video, as Netflix does.
+                format.language?.substringBefore('-')?.takeUnless { it == "und" }?.let { lang ->
+                    store.audioLanguage = if (lang == original) "original" else lang
+                }
+            }
+        }
+
+        val textGroups = tracks.filter { it.type == C.TRACK_TYPE_TEXT }
+        val subtitlesOff = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT) ||
+            textGroups.none { it.isSelected }
+        val subtitleOptions = buildList {
+            add(PanelOption("Off", subtitlesOff) {
+                activeLocalSubtitle = null
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
             })
+            textGroups.forEach { group ->
+                (0 until group.length).filter { group.isTrackSupported(it) }.forEach { index ->
+                    val format = group.getTrackFormat(index)
+                    add(PanelOption(subtitleLabel(format), !subtitlesOff && group.isTrackSelected(index)) {
+                        selectSubtitleTrack(group, index)
+                    })
+                }
+            }
+            add(PanelOption("Find more online…") { showSubtitleSearchMenu() })
+            if (activeLocalSubtitle != null && !subtitlesOff) add(PanelOption("Adjust timing…") { showSyncDialog() })
         }
-        showList("Subtitles", options.map { it.first }) { options[it].second() }
+
+        val speed = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).map { value ->
+            val label = if (value == 1f) "Normal" else "${value.toString().removeSuffix(".0")}x"
+            PanelOption(label, player.playbackParameters.speed == value) { player.setPlaybackSpeed(value) }
+        }
+
+        val sizes = listOf("Small" to 0.8f, "Medium" to 1f, "Large" to 1.3f, "Extra large" to 1.6f).map { (label, scale) ->
+            PanelOption(label, store.subtitleScale == scale) {
+                store.subtitleScale = scale
+                applySubtitleScale()
+            }
+        }
+
+        dialog = showOptionsPanel(
+            this,
+            listOf(
+                PanelColumn("Audio", audio, weight = 1.1f),
+                PanelColumn("Subtitles", subtitleOptions, weight = 1.5f),
+                PanelColumn("Speed", speed, weight = 0.75f),
+                PanelColumn("Text size", sizes, weight = 0.95f),
+            ),
+            focusColumn = 1,
+        )
+    }
+
+    private fun selectSubtitleTrack(group: Tracks.Group, index: Int) {
+        val format = group.getTrackFormat(index)
+        // Downloaded subtitles can be re-timed; embedded and DFLIX ones can't.
+        activeLocalSubtitle = store.savedSubtitles(fileId).firstOrNull { format.id?.contains(subtitleId(it)) == true }
+        subtitleOffsetMs = 0
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
+            .build()
+        format.language?.let { lang ->
+            Language.ALL.firstOrNull { it.code2.substringBefore('-') == lang.substringBefore('-') }?.let { store.subtitleLanguage = it.code3 }
+        }
+    }
+
+    private fun applySubtitleScale() {
+        playerView.subtitleView?.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * store.subtitleScale)
+    }
+
+    private fun languageName(tag: String?): String? =
+        tag?.takeUnless { it == "und" }?.let { Locale.forLanguageTag(it).getDisplayLanguage(Locale.ENGLISH) }?.takeIf { it.isNotBlank() }
+
+    /** "English [Original] · Dolby Digital 5.1" */
+    private fun audioLabel(format: Format, original: String?, fallback: String): String {
+        val name = languageName(format.language) ?: format.label ?: fallback
+        val codec = when (format.sampleMimeType) {
+            MimeTypes.AUDIO_AC3 -> "Dolby Digital"
+            MimeTypes.AUDIO_E_AC3, MimeTypes.AUDIO_E_AC3_JOC -> "Dolby Digital Plus"
+            MimeTypes.AUDIO_TRUEHD -> "Dolby TrueHD"
+            MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_HD, MimeTypes.AUDIO_DTS_EXPRESS -> "DTS"
+            else -> null
+        }
+        val channels = when (format.channelCount) {
+            1 -> "Mono"
+            2 -> "Stereo"
+            6 -> "5.1"
+            8 -> "7.1"
+            else -> null
+        }
+        val isOriginal = original != null && format.language?.substringBefore('-') == original
+        val extra = format.label?.takeIf { languageName(format.language) != null && !it.equals(name, ignoreCase = true) }
+        return buildString {
+            append(name)
+            if (isOriginal) append(" [Original]")
+            listOfNotNull(codec, channels).joinToString(" ").takeIf { it.isNotEmpty() }?.let { append(" · ").append(it) }
+            extra?.let { append(" · ").append(it.take(30)) }
+        }
+    }
+
+    /** "English", "English · Downloaded", "English · CC". */
+    private fun subtitleLabel(format: Format): String {
+        val name = languageName(format.language)
+        // Downloaded subtitles are labelled with their release name; that's noise here.
+        val downloaded = format.id?.contains("local-") == true
+        val label = format.label?.takeIf { !downloaded && it.isNotBlank() && (name == null || !it.startsWith(name, ignoreCase = true)) }
+        val tags = buildList {
+            if (downloaded) add("Downloaded")
+            if (format.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND != 0) add("CC")
+            if (format.selectionFlags and C.SELECTION_FLAG_FORCED != 0) add("Forced")
+        }
+        return listOfNotNull(name ?: label ?: "Subtitles", label?.takeIf { name != null }, tags.joinToString(" ").ifEmpty { null })
+            .joinToString(" · ")
+    }
+
+    private fun showSubtitleSearchMenu() {
+        val language = Language.byCode3(store.subtitleLanguage)
+        val options = listOf(
+            "Search online (${language.name})" to { searchSubtitles(language) },
+            "Search in another language…" to { pickLanguageThenSearch() },
+        )
+        showList("Find subtitles", options.map { it.first }) { options[it].second() }
     }
 
     /**
@@ -506,7 +639,7 @@ class PlayerActivity : ComponentActivity() {
     private fun showSyncDialog() {
         val sub = activeLocalSubtitle
         if (sub == null) {
-            toast("Sync works on downloaded subtitles. Use \"Find subtitles\" first.")
+            toast("Timing can be adjusted on downloaded subtitles. Use \"Find more online\" first.")
             return
         }
         val steps = listOf(-2000L, -1000L, -500L, -250L, 250L, 500L, 1000L, 2000L)
